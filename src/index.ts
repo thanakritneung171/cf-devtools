@@ -1,11 +1,16 @@
 import { getImage , uploadImage} from "./route/image";
 import { handleUserRoutes } from "./routes/users";
+import { handleVectorizeRoutes } from "./routes/vectorize";
+import { handleProductRoutes } from "./routes/products";
 
 interface Env {
   MY_BUCKET: R2Bucket;
   DB: D1Database;
   USERS_CACHE: KVNamespace;
-  R2_DOMAIN: string;
+  VECTORIZE: VectorizeIndex;
+  PRODUCTS_INDEX: VectorizeIndex;
+  AI: Ai;
+  R2_DOMAIN: "https://pub-5996ee0506414893a70d525a21960eba.r2.dev";
 }
 
 export default {
@@ -53,6 +58,18 @@ export default {
 	const userResponse = await handleUserRoutes(request, env, url, method);
 	if (userResponse) {
 		return userResponse;
+	}
+
+	// Vectorize API Routes
+	const vectorizeResponse = await handleVectorizeRoutes(request, env, url, method);
+	if (vectorizeResponse) {
+		return vectorizeResponse;
+	}
+
+	// Products API Routes
+	const productsResponse = await handleProductRoutes(request, env, url, method);
+	if (productsResponse) {
+		return productsResponse;
 	}
 
 		return new Response("Hello Worker!");

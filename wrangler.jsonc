@@ -14,24 +14,40 @@
 		"nodejs_compat"
 	],
 	"r2_buckets": [
-    {
-      "binding": "MY_BUCKET",
-      "bucket_name": "my-bucket"
-    }
-  ],
+		{
+			"binding": "MY_BUCKET",
+			"bucket_name": "my-bucket"
+		}
+	],
 	"d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "cf-devtools-db",
-      "database_id": "4a8eab62-631f-4480-bcfc-e8c6a7e3aa51"
-    }
-  ],
+		{
+			"binding": "DB",
+			"database_name": "cf-devtools-db",
+			"database_id": "4a8eab62-631f-4480-bcfc-e8c6a7e3aa51",
+			"remote": true
+		}
+	],
 	"kv_namespaces": [
-    {
-      "binding": "USERS_CACHE",
-      "id": "cd09db510f6545059121f1f633c6b7d9"
-    }
-  ],
+		{
+			"binding": "USERS_CACHE",
+			"id": "cd09db510f6545059121f1f633c6b7d9"
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "tutorial-index",
+			"remote": true
+		},
+		{
+			"binding": "PRODUCTS_INDEX",
+			"index_name": "products-index",
+			"remote": true
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	},
 	"vars": {
 		"R2_DOMAIN": "https://pub-5996ee0506414893a70d525a21960eba.r2.dev"
 	}
