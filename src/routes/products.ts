@@ -114,6 +114,7 @@ console.log('Generated embedding for product:', embedding);
       const matches = await env.PRODUCTS_INDEX.query(embedding, {
         topK,
         returnMetadata: 'all',
+        returnValues: true
       });
 console.log('Vectorize matches (fast search):', matches);
       // const results = (matches.matches ?? []).map((m) => ({

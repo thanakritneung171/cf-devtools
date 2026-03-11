@@ -2,6 +2,7 @@ import { getImage , uploadImage} from "./route/image";
 import { handleUserRoutes } from "./routes/users";
 import { handleVectorizeRoutes } from "./routes/vectorize";
 import { handleProductRoutes } from "./routes/products";
+import { handleDocumentRoutes } from "./routes/documents";
 
 interface Env {
   MY_BUCKET: R2Bucket;
@@ -70,6 +71,12 @@ export default {
 	const productsResponse = await handleProductRoutes(request, env, url, method);
 	if (productsResponse) {
 		return productsResponse;
+	}
+
+	// Documents API Routes
+	const documentsResponse = await handleDocumentRoutes(request, env, url, method);
+	if (documentsResponse) {
+		return documentsResponse;
 	}
 
 		return new Response("Hello Worker!");
