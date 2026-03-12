@@ -32,25 +32,8 @@
       "id": "cd09db510f6545059121f1f633c6b7d9"
     }
   ],
-	"queues": {
-		"producers": [
-			{
-				"binding": "IMAGE_RESIZE_QUEUE",
-				"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba",
-				"max_batch_size": 10,
-				"max_batch_timeout": 30,
-				
-			}
-		]
-	},
 	"vars": {
-		"R2_DOMAIN": "https://pub-5996ee0506414893a70d525a21960eba.r2.dev",
-		"JWT_SECRET": "dev-secret-change-me"
+		"R2_DOMAIN": "https://pub-5996ee0506414893a70d525a21960eba.r2.dev"
 	}
 	/**
 	 * Smart Placement

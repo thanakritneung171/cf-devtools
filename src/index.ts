@@ -1,14 +1,11 @@
 import { getImage , uploadImage} from "./route/image";
 import { handleUserRoutes } from "./routes/users";
-import { handlePostRoutes } from "./routes/posts";
-import { handleImageResizeQueue, ImageResizeMessage } from "./queues/imageResizeConsumer";
 
 interface Env {
   MY_BUCKET: R2Bucket;
   DB: D1Database;
   USERS_CACHE: KVNamespace;
   R2_DOMAIN: string;
-  IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
 }
 
 export default {
@@ -58,19 +55,6 @@ export default {
 		return userResponse;
 	}
 
-	// Posts API Routes
-	if (url.pathname.startsWith('/api/posts')) {
-		return await handlePostRoutes(request, env);
-	}
-
 		return new Response("Hello Worker!");
-	},
-
-	/**
-	 * Queue Consumer Handler
-	 * จัดการ messages จาก Image Resize Queue
-	 */
-	async queue(batch: MessageBatch<ImageResizeMessage>, env: Env): Promise<void> {
-		await handleImageResizeQueue(batch, env);
 	},
 } satisfies ExportedHandler<Env>;

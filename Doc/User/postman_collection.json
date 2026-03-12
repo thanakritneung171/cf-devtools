@@ -1,17 +1,16 @@
 {
   "info": {
-    "_postman_id": "f23cb1fe-9b57-41fb-804b-2d84a7f2148f",
-    "name": "User CRUD API Authorization",
+    "_postman_id": "cf-devtools-001",
+    "name": "User CRUD API",
     "description": "User Management API with CRUD operations",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "_exporter_id": "20197964"
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
       "name": "User Operations",
       "item": [
         {
-          "name": "1. Create User (JSON)",
+          "name": "1. Create User",
           "event": [
             {
               "listen": "test",
@@ -25,10 +24,7 @@
                   "        pm.expect(jsonData).to.have.property('id');",
                   "    });",
                   "}"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
@@ -42,7 +38,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"john23.doe@example.com\",\n  \"password_hash\": \"$2b$10$abcdefghijklmnopqrst\",\n  \"first_name\": \"John12\",\n  \"last_name\": \"Doe23\",\n  \"phone\": \"0812345678\",\n  \"address\": \"123 Main St, Bangkok, Thailand\",\n  \"date_of_birth\": \"1990-01-15\",\n  \"status\": \"active\"\n}"
+              "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"password_hash\": \"$2b$10$abcdefghijklmnopqrst\",\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"phone\": \"0812345678\",\n  \"address\": \"123 Main St, Bangkok, Thailand\",\n  \"date_of_birth\": \"1990-01-15\",\n  \"status\": \"active\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/users",
@@ -54,8 +50,7 @@
                 "users"
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "1a. Create User with Avatar",
@@ -72,8 +67,7 @@
                   "        pm.expect(jsonData).to.have.property('avatar_url');",
                   "    });",
                   "}"
-                ],
-                "type": "text/javascript"
+                ]
               }
             }
           ],
@@ -126,7 +120,7 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "value": null
+                  "src": []
                 }
               ]
             },
@@ -140,87 +134,8 @@
                 "users"
               ]
             }
-          },
-          "response": []
+          }
         },
-        {
-          "name": "Auth - Login",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Login success', function() {",
-                  "  pm.expect(pm.response.code).to.equal(200);",
-                  "});",
-                  "var jsonData = pm.response.json();",
-                  "if (jsonData.token) {",
-                  "  pm.environment.set('auth_token', jsonData.token);",
-                  "}"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"password_hash\": \"$2b$10$abcdefghijklmnopqrst\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/auth/login",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "auth",
-                "login"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Auth - Logout",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/auth/logout",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "auth",
-                "logout"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "2. Get All Users",
           "event": [
             {
               "listen": "test",
@@ -234,24 +149,11 @@
                   "pm.test('Response has pagination', function() {",
                   "    pm.expect(jsonData).to.have.property('pagination');",
                   "});"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "GET",
             "header": [],
             "url": {
@@ -266,11 +168,13 @@
               "query": [
                 {
                   "key": "page",
-                  "value": "1"
+                  "value": "1",
+                  "disabled": false
                 },
                 {
                   "key": "limit",
-                  "value": "10"
+                  "value": "10",
+                  "disabled": false
                 },
                 {
                   "key": "status",
@@ -284,22 +188,11 @@
                 }
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "2a. Get All Users - With Filter",
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "GET",
             "header": [],
             "url": {
@@ -330,8 +223,7 @@
                 }
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "3. Get User by ID",
@@ -349,24 +241,11 @@
                   "    pm.expect(jsonData).to.have.property('id');",
                   "    pm.expect(jsonData).to.have.property('email');",
                   "});"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "GET",
             "header": [],
             "url": {
@@ -380,8 +259,7 @@
                 "{{user_id}}"
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "4. Update User",
@@ -398,24 +276,11 @@
                   "pm.test('User updated', function() {",
                   "    pm.expect(jsonData.first_name).to.equal('Jonathan');",
                   "});"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "PUT",
             "header": [
               {
@@ -425,7 +290,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"first_name\": \"Jonathan112\",\n  \"last_name\": \"Doe111\",\n  \"phone\": \"0887654321\",\n  \"status\": \"inactive\",\n  \"last_login_at\": \"2026-02-19T14:30:00Z\"\n}"
+              "raw": "{\n  \"first_name\": \"Jonathan\",\n  \"last_name\": \"Doe\",\n  \"phone\": \"0887654321\",\n  \"status\": \"inactive\",\n  \"last_login_at\": \"2026-02-19T14:30:00Z\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/users/{{user_id}}",
@@ -438,8 +303,7 @@
                 "{{user_id}}"
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "5. Delete User",
@@ -454,26 +318,13 @@
                   "",
                   "var jsonData = pm.response.json();",
                   "pm.test('User deleted', function() {",
-                  "    pm.expect(jsonData.message).to.equal('ลบผู้ใช้สำเร็จ');",
+                  "    pm.expect(jsonData.message).to.equal('User deleted successfully');",
                   "});"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "DELETE",
             "header": [],
             "url": {
@@ -487,8 +338,7 @@
                 "{{user_id}}"
               ]
             }
-          },
-          "response": []
+          }
         },
         {
           "name": "6. Upload User Avatar",
@@ -506,24 +356,11 @@
                   "    pm.expect(jsonData).to.have.property('avatar_url');",
                   "    pm.expect(jsonData.avatar_url).to.include('users');",
                   "});"
-                ],
-                "type": "text/javascript",
-                "packages": {},
-                "requests": {}
+                ]
               }
             }
           ],
           "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token_key}}",
-                  "type": "string"
-                }
-              ]
-            },
             "method": "POST",
             "header": [],
             "body": {
@@ -532,7 +369,7 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "/C:/Users/Thanachat_J/Desktop/Project/CF/Screenshot_2.png"
+                  "src": []
                 }
               ]
             },
@@ -548,8 +385,7 @@
                 "avatar"
               ]
             }
-          },
-          "response": []
+          }
         }
       ]
     }
@@ -584,11 +420,6 @@
       "key": "user_id",
       "value": "1",
       "type": "string"
-    },
-    {
-      "key": "token_key",
-      "value": "",
-      "type": "default"
     }
   ]
 }
