@@ -2,6 +2,9 @@ import { getImage , uploadImage} from "./route/image";
 import { handleUserRoutes } from "./routes/users";
 import { handlePostRoutes } from "./routes/posts";
 import { handleImageResizeQueue, ImageResizeMessage } from "./queues/imageResizeConsumer";
+import { handleVectorizeRoutes } from "./routes/vectorize";
+import { handleProductRoutes } from "./routes/products";
+import { handleDocumentRoutes } from "./routes/documents";
 
 interface Env {
   MY_BUCKET: R2Bucket;
@@ -61,6 +64,24 @@ export default {
 	// Posts API Routes
 	if (url.pathname.startsWith('/api/posts')) {
 		return await handlePostRoutes(request, env);
+	}
+
+	// Vectorize API Routes
+	const vectorizeResponse = await handleVectorizeRoutes(request, env, url, method);
+	if (vectorizeResponse) {
+		return vectorizeResponse;
+	}
+
+	// Products API Routes
+	const productsResponse = await handleProductRoutes(request, env, url, method);
+	if (productsResponse) {
+		return productsResponse;
+	}
+
+	// Documents API Routes
+	const documentsResponse = await handleDocumentRoutes(request, env, url, method);
+	if (documentsResponse) {
+		return documentsResponse;
 	}
 
 		return new Response("Hello Worker!");
