@@ -119,6 +119,21 @@ export class UserService {
     return result || null;
   }
 
+  async getUserByEmail(email: string): Promise<User | null> {
+    // Try to find in DB (we don't cache by email)
+    const result = await this.db
+      .prepare('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL')
+      .bind(email)
+      .first<User>();
+
+    if (result) {
+      // populate cache by id
+      await this.cache.put(this.getCacheKey(result.id.toString()), JSON.stringify(result), { expirationTtl: this.cacheExpiry });
+    }
+
+    return result || null;
+  }
+
   async getUserByIdWithSource(id: number): Promise<{ user: User; source: 'cache' | 'database' } | null> {
     // Try cache first
     const cached = await this.cache.get(this.getCacheKey(id.toString()));
