@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx wrangler d1 execute:*)",
+      "Bash(npx wrangler deploy:*)"
+    ]
+  }
+}

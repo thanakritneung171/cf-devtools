@@ -73,7 +73,7 @@ export async function handleProductRoutes(
       // 2. Generate embedding via Workers AI
       const embedText = buildEmbedText(body);
       const embedding = await generateEmbedding(env.AI, embedText);
-console.log('Generated embedding for product:', embedding);
+      console.log('Generated embedding for product:', embedding);
       // 3. Store vector in Vectorize (ID = D1 row id as string)
       await env.PRODUCTS_INDEX.insert([
         {

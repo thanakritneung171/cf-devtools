@@ -1,6 +1,7 @@
 import { UserService } from '../services/UserService';
 import { CreateUserInput, CreateUserWithAvatarInput, UpdateUserInput } from '../types';
-import { generateJWT, verifyJWT } from '../utils/jwt';
+import { generateJWT } from '../utils/jwt';
+import { verifyRequestAuth } from '../utils/auth';
 import { ImageResizeMessage } from '../queues/imageResizeConsumer';
 
 interface Env {
@@ -20,37 +21,6 @@ const getR2Domain = (env: Env): string => {
 
 export async function handleUserRoutes(request: Request, env: Env, url: URL, method: string): Promise<Response | null> {
   const userService = new UserService(env);
-
-  async function verifyRequestAuth(req: Request) {
-    const secret = (env as any).JWT_SECRET;
-    if (!secret) {
-      return Response.json({ error: 'JWT secret ไม่ได้ถูกตั้งค่า (env.JWT_SECRET)' }, { status: 500 });
-    }
-
-    const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
-    if (!authHeader.startsWith('Bearer ')) {
-      return Response.json({ error: 'ต้องแนบ Authorization: Bearer <token>' }, { status: 401 });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const payload = await verifyJWT(token, secret);
-    if (!payload) {
-      return Response.json({ error: 'token ไม่ถูกต้องหรือหมดอายุ' }, { status: 401 });
-    }
-    // Check revocation in KV (key: revoked:{jti})
-    try {
-      const jti = (payload as any).jti;
-      if (jti) {
-        const revoked = await (env as any).USERS_CACHE.get(`revoked:${jti}`);
-        if (revoked) {
-          return Response.json({ error: 'token ถูกยกเลิกแล้ว' }, { status: 401 });
-        }
-      }
-    } catch (e) {
-      // ignore KV errors
-    }
-    return payload;
-  }
 
   // Create User - POST /api/users (JSON หรือ Form Data)
   if (url.pathname === '/api/users' && method === 'POST') {
@@ -139,7 +109,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
   if (url.pathname === '/api/users' && method === 'GET') {
     try {
       // Require auth
-      const authCheck = await verifyRequestAuth(request);
+      const authCheck = await verifyRequestAuth(request, env);
       if (authCheck instanceof Response) return authCheck;
 
       const page = parseInt(url.searchParams.get('page') || '1');
@@ -165,7 +135,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
   if (url.pathname.startsWith('/api/users/') && method === 'GET' && !url.pathname.endsWith('/avatar')) {
     try {
       // Require auth
-      const authCheck = await verifyRequestAuth(request);
+      const authCheck = await verifyRequestAuth(request, env);
       if (authCheck instanceof Response) return authCheck;
 
       const id = parseInt(url.pathname.split('/')[3]);
@@ -199,7 +169,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
   if (url.pathname.startsWith('/api/users/') && method === 'PUT' && !url.pathname.endsWith('/avatar')) {
     try {
       // Require auth
-      const authCheck = await verifyRequestAuth(request);
+      const authCheck = await verifyRequestAuth(request, env);
       if (authCheck instanceof Response) return authCheck;
 
       const id = parseInt(url.pathname.split('/')[3]);
@@ -318,7 +288,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
   if (url.pathname.startsWith('/api/users/') && method === 'DELETE' && !url.pathname.endsWith('/avatar')) {
     try {
       // Require auth
-      const authCheck = await verifyRequestAuth(request);
+      const authCheck = await verifyRequestAuth(request, env);
       if (authCheck instanceof Response) return authCheck;
 
       const id = parseInt(url.pathname.split('/')[3]);
@@ -394,7 +364,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
   if (url.pathname === '/api/auth/logout' && method === 'POST') {
     try {
       // Require auth and revoke token
-      const authCheck = await verifyRequestAuth(request);
+      const authCheck = await verifyRequestAuth(request, env);
       if (authCheck instanceof Response) return authCheck;
 
       const payload: any = authCheck;

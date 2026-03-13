@@ -5,12 +5,18 @@ import { handleImageResizeQueue, ImageResizeMessage } from "./queues/imageResize
 import { handleVectorizeRoutes } from "./routes/vectorize";
 import { handleProductRoutes } from "./routes/products";
 import { handleDocumentRoutes } from "./routes/documents";
+import { handleProductPOCRoutes } from "./routes/productPOC";
+import { handleBookingRoutes } from "./routes/bookings";
+import { handleLogRoutes } from "./routes/logs";
+import { handleFileRoutes } from "./routes/files";
+import { LogService } from "./services/LogService";
 
 interface Env {
   MY_BUCKET: R2Bucket;
   DB: D1Database;
   USERS_CACHE: KVNamespace;
   R2_DOMAIN: string;
+  JWT_SECRET?: string;
   IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
 }
 
@@ -49,7 +55,7 @@ export default {
     if (url.pathname === "/api/image" && method === "GET") {
       return getImage(request, env);
     }
-	
+
 	 // Upload
     if (url.pathname === "/api/upload" && method === "POST") {
       return uploadImage(request, env);
@@ -84,7 +90,37 @@ export default {
 		return documentsResponse;
 	}
 
-		return new Response("Hello Worker!");
+	// ProductPOC API Routes
+	const productPOCResponse = await handleProductPOCRoutes(request, env, url, method);
+	if (productPOCResponse) {
+		return productPOCResponse;
+	}
+
+	// Bookings API Routes
+	const bookingsResponse = await handleBookingRoutes(request, env, url, method);
+	if (bookingsResponse) {
+		return bookingsResponse;
+	}
+
+	// Logs API Routes
+	const logsResponse = await handleLogRoutes(request, env, url, method);
+	if (logsResponse) {
+		return logsResponse;
+	}
+
+	// Files API Routes
+	const filesResponse = await handleFileRoutes(request, env, url, method);
+	if (filesResponse) {
+		return filesResponse;
+	}
+
+	// Request Logging - บันทึกทุก request ที่ไม่ match route ใดๆ
+	const logService = new LogService(env);
+	ctx.waitUntil(
+		logService.logRequest(url.pathname, 404, `${method} ${url.pathname} - Not Found`)
+	);
+
+		return Response.json({ error: "Not Found" }, { status: 404 });
 	},
 
 	/**
