@@ -18,6 +18,9 @@ interface Env {
   R2_DOMAIN: string;
   JWT_SECRET?: string;
   IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
+  PRODUCTS_POC_INDEX: VectorizeIndex;
+  BOOKINGS_INDEX: VectorizeIndex;
+  AI: Ai;
 }
 
 export default {

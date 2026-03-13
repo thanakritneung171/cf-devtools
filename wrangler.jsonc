@@ -33,22 +33,22 @@
       "id": "cd09db510f6545059121f1f633c6b7d9"
     }
   ],
-	"queues": {
-		"producers": [
-			{
-				"binding": "IMAGE_RESIZE_QUEUE",
-				"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba"
-			}
-		],
-		"consumers": [
-			{
-				"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba",
-				"max_batch_size": 10,
-				"max_batch_timeout": 30,
+	// "queues": {
+	// 	"producers": [
+	// 		{
+	// 			"binding": "IMAGE_RESIZE_QUEUE",
+	// 			"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba"
+	// 		}
+	// 	],
+	// 	"consumers": [
+	// 		{
+	// 			"queue": "7c6e7126a6b74e42a3b5af4bd27ed9ba",
+	// 			"max_batch_size": 10,
+	// 			"max_batch_timeout": 30,
 				
-			}
-		]
-	},
+	// 		}
+	// 	]
+	// },
 	"vectorize": [
 		{
 			"binding": "VECTORIZE",
@@ -58,6 +58,16 @@
 		{
 			"binding": "PRODUCTS_INDEX",
 			"index_name": "products-index",
+			"remote": true
+		},
+		{
+			"binding": "PRODUCTS_POC_INDEX",
+			"index_name": "products-poc-index",
+			"remote": true
+		},
+		{
+			"binding": "BOOKINGS_INDEX",
+			"index_name": "bookings-index",
 			"remote": true
 		}
 	],

@@ -7,7 +7,7 @@
 | **D1** (SQLite) | productsPOC, bookings, bookingQueue, Logs, files, users, posts | `DB` |
 | **KV** | Cache user data, token revocation | `USERS_CACHE` |
 | **R2** | File/image storage | `MY_BUCKET` |
-| **Vectorize + AI** | Vector search (products, documents) | `VECTORIZE`, `PRODUCTS_INDEX`, `AI` |
+| **Vectorize + AI** | Vector search (products, productsPOC, bookings, documents) | `VECTORIZE`, `PRODUCTS_INDEX`, `PRODUCTS_POC_INDEX`, `BOOKINGS_INDEX`, `AI` |
 | **Queue** | Async image resize | `IMAGE_RESIZE_QUEUE` |
 
 ---
@@ -38,23 +38,13 @@ Header: Authorization: Bearer <token>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/productPOC` | สร้างสินค้า |
+| POST | `/api/productPOC` | สร้างสินค้า + สร้าง Vectorize embedding |
 | GET | `/api/productPOC?page=1&limit=10&search=keyword` | ดูสินค้าทั้งหมด (pagination + search) |
 | GET | `/api/productPOC/:id` | ดูสินค้าตาม ID |
-| PUT | `/api/productPOC/:id` | แก้ไขสินค้า |
-| DELETE | `/api/productPOC/:id` | ลบสินค้า |
-
-### Create Product Body
-```json
-{
-  "user_id": 1,
-  "product_name": "สินค้า A",
-  "description": "รายละเอียด",
-  "price": 100.00,
-  "total_quantity": 50,
-  "available_quantity": 50
-}
-```
+| PUT | `/api/productPOC/:id` | แก้ไขสินค้า + อัปเดต Vectorize embedding |
+| DELETE | `/api/productPOC/:id` | ลบสินค้า + ลบ Vectorize vector |
+| GET | `/api/productPOC/search?q=keyword&topK=5` | Semantic search + ข้อมูลจาก D1 |
+| GET | `/api/productPOC/search/fast?q=keyword&topK=5` | Semantic search (metadata only, เร็วกว่า) |
 
 ---
 
@@ -62,27 +52,21 @@ Header: Authorization: Bearer <token>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/bookings` | จองสินค้า (auto queue ถ้าเกิน) |
+| POST | `/api/bookings` | จองสินค้า (auto queue ถ้าเกิน) + สร้าง Vectorize embedding |
 | GET | `/api/bookings?page=1&limit=10` | ดูการจองทั้งหมด |
 | GET | `/api/bookings/user/:userId` | ดูการจองของ user |
 | GET | `/api/bookings/product/:productId` | ดูการจองของสินค้า |
-| PUT | `/api/bookings/:id/cancel` | ยกเลิกการจอง (คืน stock + process queue) |
+| PUT | `/api/bookings/:id/cancel` | ยกเลิกการจอง (คืน stock + process queue) + ลบ Vectorize vector |
 | GET | `/api/bookings/queue/:productId` | ดูคิวของสินค้า |
 | PUT | `/api/bookings/queue/:id/cancel` | ยกเลิกคิว |
-
-### Create Booking Body
-```json
-{
-  "user_id": 1,
-  "product_id": 1,
-  "quantity": 5
-}
+| GET | `/api/bookings/search?q=keyword&topK=5` | Semantic search + ข้อมูลจาก D1 |
+| GET | `/api/bookings/search/fast?q=keyword&topK=5` | Semantic search (metadata only, เร็วกว่า) |
 ```
 
 ### Booking Flow
-1. ถ้า `available_quantity >= quantity` → จองสำเร็จ, ลด stock
-2. ถ้า `available_quantity < quantity` → เข้า Queue อัตโนมัติ
-3. เมื่อยกเลิกการจอง → คืน stock + process Queue ให้คนรอตามลำดับ
+1. ถ้า `available_quantity >= quantity` → จองสำเร็จ, ลด stock, สร้าง Vectorize embedding
+2. ถ้า `available_quantity < quantity` → เข้า Queue อัตโนมัติ (ไม่สร้าง embedding)
+3. เมื่อยกเลิกการจอง → คืน stock + process Queue + ลบ Vectorize vector
 
 ---
 
