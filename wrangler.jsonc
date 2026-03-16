@@ -31,6 +31,10 @@
     {
       "binding": "USERS_CACHE",
       "id": "cd09db510f6545059121f1f633c6b7d9"
+    },
+	{
+      "binding": "USERS_Profile",
+      "id": "79858f783965430da249f8ac6e0d056e"
     }
   ],
 	// "queues": {

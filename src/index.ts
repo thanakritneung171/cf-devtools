@@ -15,6 +15,7 @@ interface Env {
   MY_BUCKET: R2Bucket;
   DB: D1Database;
   USERS_CACHE: KVNamespace;
+  USERS_Profile: KVNamespace;
   R2_DOMAIN: string;
   JWT_SECRET?: string;
   IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;

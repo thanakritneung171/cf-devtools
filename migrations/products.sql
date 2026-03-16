@@ -8,5 +8,7 @@ CREATE TABLE productsPOC (
     available_quantity INTEGER NOT NULL, -- จำนวนสินค้าที่เหลือให้จอง
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- วันที่สร้างสินค้า
     updated_at DATETIME, -- วันที่แก้ไขข้อมูลล่าสุด
-    FOREIGN KEY (user_id) REFERENCES users(id) -- FK ไปยัง Users
+    image_id INTEGER, -- รหัสรูปภาพจากตาราง files
+    FOREIGN KEY (user_id) REFERENCES users(id), -- FK ไปยัง Users
+    FOREIGN KEY (image_id) REFERENCES files(id) -- FK ไปยัง Files
 );

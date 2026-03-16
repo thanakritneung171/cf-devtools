@@ -7,11 +7,15 @@ import { ImageResizeMessage } from '../queues/imageResizeConsumer';
 interface Env {
   DB: D1Database;
   USERS_CACHE: KVNamespace;
+  USERS_Profile: KVNamespace;
   MY_BUCKET: R2Bucket;
   R2_DOMAIN: string;
   JWT_SECRET?: string;
   IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
 }
+
+const PROFILE_TTL = 60 * 60 * 3; // 3 hours   seconds * minutes * hours
+const getProfileKey = (userId: number) => `profile:${userId}`;
 
 // R2 Domain - Auto-read from environment variable
 // Update in wrangler.jsonc: vars.R2_DOMAIN
@@ -139,7 +143,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
       if (authCheck instanceof Response) return authCheck;
 
       const id = parseInt(url.pathname.split('/')[3]);
-      
+
       if (isNaN(id)) {
         return Response.json(
           { error: 'รหัสผู้ใช้ไม่ถูกต้อง' },
@@ -147,6 +151,13 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         );
       }
 
+      // ดึงจาก KV USERS_Profile ก่อน
+      const profileCached = await env.USERS_Profile.get(getProfileKey(id));
+      if (profileCached) {
+        return Response.json({ user: JSON.parse(profileCached), source: 'profile_cache' });
+      }
+
+      // ไม่มีใน USERS_Profile → ดึงจาก service (USERS_CACHE + D1)
       const result = await userService.getUserByIdWithSource(id);
 
       if (!result) {
@@ -155,6 +166,13 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
           { status: 404 }
         );
       }
+
+      // เก็บลง USERS_Profile สำหรับครั้งถัดไป
+      await env.USERS_Profile.put(
+        getProfileKey(id),
+        JSON.stringify(result.user),
+        { expirationTtl: PROFILE_TTL }
+      );
 
       return Response.json(result);
     } catch (error: any) {
@@ -184,13 +202,16 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
       const body = await request.json<UpdateUserInput>();
 
       const user = await userService.updateUser(id, body);
-      
+
       if (!user) {
         return Response.json(
           { error: 'ไม่พบผู้ใช้' },
           { status: 404 }
         );
       }
+
+      // Invalidate USERS_Profile KV
+      await env.USERS_Profile.delete(getProfileKey(id));
 
       return Response.json(user);
     } catch (error: any) {
@@ -266,6 +287,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
       // Update user with avatar URL
       const updatedUser = await userService.updateUserAvatarUrl(id, avatarUrl);
 
+      // Invalidate USERS_Profile KV
+      await env.USERS_Profile.delete(getProfileKey(id));
+
       // 🎯 ส่ง message ไปยัง Queue เพื่อ resize รูปภาพ
       await env.IMAGE_RESIZE_QUEUE.send({
         userId: id,
@@ -308,6 +332,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
           { status: 404 }
         );
       }
+
+      // Invalidate USERS_Profile KV
+      await env.USERS_Profile.delete(getProfileKey(id));
 
       return Response.json({ message: 'ลบผู้ใช้สำเร็จ' });
     } catch (error: any) {
@@ -354,6 +381,13 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
 
       const token = await generateJWT({ sub: user.id, email: user.email }, secret, 3600);
 
+      // เก็บ user profile ลง KV USERS_Profile
+      await env.USERS_Profile.put(
+        getProfileKey(user.id),
+        JSON.stringify(userSafe),
+        { expirationTtl: PROFILE_TTL }
+      );
+
       return Response.json({ user: userSafe, token, message: 'เข้าสู่ระบบสำเร็จ' }, { status: 200 });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ไม่สามารถเข้าสู่ระบบได้' }, { status: 500 });
@@ -382,6 +416,11 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         await (env as any).USERS_CACHE.put(`revoked:${jti}`, '1', { expirationTtl: ttl });
       } catch (e: any) {
         return Response.json({ error: 'ไม่สามารถบันทึกสถานะยกเลิก token ใน KV ได้' }, { status: 500 });
+      }
+
+      // Invalidate USERS_Profile KV
+      if (payload.sub) {
+        await env.USERS_Profile.delete(getProfileKey(Number(payload.sub)));
       }
 
       return Response.json({ message: 'ออกจากระบบสำเร็จ' });

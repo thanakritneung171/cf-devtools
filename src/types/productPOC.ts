@@ -7,6 +7,8 @@ export interface ProductPOC {
   price: number;
   total_quantity: number;
   available_quantity: number;
+  image_id?: number;
+  image_url?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -18,6 +20,7 @@ export interface CreateProductPOCInput {
   price: number;
   total_quantity: number;
   available_quantity: number;
+  image_id?: number;
 }
 
 export interface UpdateProductPOCInput {
@@ -26,6 +29,7 @@ export interface UpdateProductPOCInput {
   price?: number;
   total_quantity?: number;
   available_quantity?: number;
+  image_id?: number;
 }
 
 // === Booking ===

@@ -1,4 +1,5 @@
 import { ProductPOCService } from '../services/ProductPOCService';
+import { FileService } from '../services/FileService';
 import { verifyRequestAuth } from '../utils/auth';
 import { CreateProductPOCInput, UpdateProductPOCInput } from '../types/productPOC';
 
@@ -8,6 +9,8 @@ interface Env {
   JWT_SECRET?: string;
   PRODUCTS_POC_INDEX: VectorizeIndex;
   AI: Ai;
+  MY_BUCKET: R2Bucket;
+  R2_DOMAIN?: string;
 }
 
 function buildProductPOCEmbedText(p: { product_name: string; description?: string; price: number }): string {
@@ -21,6 +24,7 @@ async function generateEmbedding(ai: Ai, text: string): Promise<number[]> {
 
 export async function handleProductPOCRoutes(request: Request, env: Env, url: URL, method: string): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/productPOC')) return null;
+  // แยก /api/productPOCimage ให้ match ก่อนเช็ค auth เพื่อไม่ให้ชน pattern อื่น
 
   const service = new ProductPOCService(env);
 
@@ -28,7 +32,7 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
   const authCheck = await verifyRequestAuth(request, env);
   if (authCheck instanceof Response) return authCheck;
 
-  // POST /api/productPOC - สร้างสินค้า
+  // POST /api/productPOC - สร้างสินค้า (JSON ไม่มีรูป)
   if (url.pathname === '/api/productPOC' && method === 'POST') {
     try {
       const body = await request.json<CreateProductPOCInput>();
@@ -38,6 +42,64 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       if (body.available_quantity === undefined) {
         body.available_quantity = body.total_quantity;
       }
+      const product = await service.create(body);
+
+      // สร้าง Vectorize embedding
+      const embedText = buildProductPOCEmbedText(body);
+      const embedding = await generateEmbedding(env.AI, embedText);
+      await env.PRODUCTS_POC_INDEX.insert([
+        {
+          id: String(product.id),
+          values: embedding,
+          metadata: {
+            product_name: body.product_name,
+            description: body.description || '',
+            price: String(body.price),
+          },
+        },
+      ]);
+
+      return Response.json(product, { status: 201 });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ไม่สามารถสร้างสินค้าได้' }, { status: 500 });
+    }
+  }
+
+  // POST /api/productPOCimage - สร้างสินค้าพร้อมอัปโหลดรูป (multipart/form-data)
+  if (url.pathname === '/api/productPOCimage' && method === 'POST') {
+    try {
+      const formData = await request.formData();
+      const file = formData.get('file') as File | null;
+
+      const body: CreateProductPOCInput = {
+        user_id: parseInt(formData.get('user_id') as string),
+        product_name: formData.get('product_name') as string,
+        description: (formData.get('description') as string) || undefined,
+        price: parseFloat(formData.get('price') as string),
+        total_quantity: parseInt(formData.get('total_quantity') as string),
+        available_quantity: formData.get('available_quantity')
+          ? parseInt(formData.get('available_quantity') as string)
+          : parseInt(formData.get('total_quantity') as string),
+      };
+
+      if (!body.product_name || isNaN(body.price) || isNaN(body.total_quantity)) {
+        return Response.json({ error: 'กรุณากรอก product_name, price, total_quantity' }, { status: 400 });
+      }
+      if (isNaN(body.available_quantity)) {
+        body.available_quantity = body.total_quantity;
+      }
+
+      // อัปโหลดรูปผ่าน FileService (ถ้ามี)
+      if (file) {
+        if (file.size > 10 * 1024 * 1024) {
+          return Response.json({ error: 'ไฟล์ขนาดใหญ่เกิน 10MB' }, { status: 400 });
+        }
+        const fileService = new FileService(env);
+        const authPayload = authCheck as any;
+        const uploadedFile = await fileService.uploadFile(file, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
+        body.image_id = uploadedFile.id;
+      }
+
       const product = await service.create(body);
 
       // สร้าง Vectorize embedding
@@ -174,6 +236,36 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       return Response.json(product);
     } catch (error: any) {
       return Response.json({ error: error.message }, { status: 500 });
+    }
+  }
+
+  // POST /api/productPOC/:id/image - อัปโหลด/เปลี่ยนรูปสินค้า
+  const imageMatch = url.pathname.match(/^\/api\/productPOC\/(\d+)\/image$/);
+  if (imageMatch && method === 'POST') {
+    try {
+      const productId = parseInt(imageMatch[1]);
+      const existing = await service.getById(productId);
+      if (!existing) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
+      const formData = await request.formData();
+      const file = formData.get('file') as File | null;
+      if (!file) return Response.json({ error: 'กรุณาแนบไฟล์รูปภาพ (field: file)' }, { status: 400 });
+
+      // ตรวจสอบขนาดไฟล์ (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        return Response.json({ error: 'ไฟล์ขนาดใหญ่เกิน 10MB' }, { status: 400 });
+      }
+
+      const fileService = new FileService(env);
+      const authPayload = authCheck as any;
+      const uploadedFile = await fileService.uploadFile(file, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
+
+      // อัปเดต image_id ในสินค้า
+      const product = await service.update(productId, { image_id: uploadedFile.id });
+
+      return Response.json({ product, file: uploadedFile, message: 'อัปโหลดรูปสินค้าสำเร็จ' }, { status: 200 });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'อัปโหลดรูปไม่สำเร็จ' }, { status: 500 });
     }
   }
 

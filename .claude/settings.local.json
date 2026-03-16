@@ -3,7 +3,11 @@
     "allow": [
       "Bash(npx wrangler d1 execute:*)",
       "Bash(npx wrangler deploy:*)",
-      "Bash(npx wrangler vectorize:*)"
+      "Bash(npx wrangler vectorize:*)",
+      "Bash(ls:*)",
+      "Bash(npx wrangler r2 object head:*)",
+      "Bash(npx wrangler:*)",
+      "Bash(curl:*)"
     ]
   }
 }
