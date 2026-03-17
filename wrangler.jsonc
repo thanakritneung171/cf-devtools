@@ -13,6 +13,20 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+			"name": "PRODUCT_QUEUE",
+			"class_name": "ProductQueueDO"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_classes": ["ProductQueueDO"]
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "MY_BUCKET",

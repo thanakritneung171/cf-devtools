@@ -10,6 +10,7 @@ import { handleBookingRoutes } from "./routes/bookings";
 import { handleLogRoutes } from "./routes/logs";
 import { handleFileRoutes } from "./routes/files";
 import { LogService } from "./services/LogService";
+export { ProductQueueDO } from "./durableObjects/ProductQueueDO";
 
 interface Env {
   MY_BUCKET: R2Bucket;
@@ -22,6 +23,7 @@ interface Env {
   PRODUCTS_POC_INDEX: VectorizeIndex;
   BOOKINGS_INDEX: VectorizeIndex;
   AI: Ai;
+  PRODUCT_QUEUE: DurableObjectNamespace;
 }
 
 export default {
@@ -116,6 +118,59 @@ export default {
 	const filesResponse = await handleFileRoutes(request, env, url, method);
 	if (filesResponse) {
 		return filesResponse;
+	}
+	
+
+	 // join queue
+    if (url.pathname === "/queue/join" && request.method === "POST") {
+
+		const body = await request.json()
+
+		const productId = body.productId
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		return stub.fetch("https://queue/join", {
+		method: "POST",
+		body: JSON.stringify(body)
+		})
+
+    }
+
+	// leave queue
+    if (url.pathname === "/queue/leave" && request.method === "POST") {
+
+		const body = await request.json()
+
+		const productId = body.productId
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		return stub.fetch("https://queue/leave", {
+		method: "POST",
+		body: JSON.stringify(body)
+		})
+
+    }
+
+	if (url.pathname.startsWith("/queue")) {
+
+		const productId = url.searchParams.get("productId")
+
+		if (!productId) {
+			return new Response("Missing productId", { status: 400 })
+		}
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		console.log("เข้า index route แล้ว:", url.pathname, "productId:", productId)
+
+		return stub.fetch(request)
 	}
 
 	// Request Logging - บันทึกทุก request ที่ไม่ match route ใดๆ
