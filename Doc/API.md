@@ -50,23 +50,101 @@ Header: Authorization: Bearer <token>
 
 ## Bookings API (Auth Required)
 
+### การจอง (Bookings)
+
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/bookings` | จองสินค้า (auto queue ถ้าเกิน) + สร้าง Vectorize embedding |
 | GET | `/api/bookings?page=1&limit=10` | ดูการจองทั้งหมด |
+| GET | `/api/bookings/:id` | ดูการจองตาม ID |
 | GET | `/api/bookings/user/:userId` | ดูการจองของ user |
 | GET | `/api/bookings/product/:productId` | ดูการจองของสินค้า |
+| PUT | `/api/bookings/:id/complete` | เสร็จสิ้นการจอง (คืน stock + process queue) + ลบ Vectorize vector |
 | PUT | `/api/bookings/:id/cancel` | ยกเลิกการจอง (คืน stock + process queue) + ลบ Vectorize vector |
-| GET | `/api/bookings/queue/:productId` | ดูคิวของสินค้า |
-| PUT | `/api/bookings/queue/:id/cancel` | ยกเลิกคิว |
 | GET | `/api/bookings/search?q=keyword&topK=5` | Semantic search + ข้อมูลจาก D1 |
 | GET | `/api/bookings/search/fast?q=keyword&topK=5` | Semantic search (metadata only, เร็วกว่า) |
+
+### Countdown Simulation (จำลองนับถอยหลัง)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/bookings/:id/start-countdown` | เริ่มนับถอยหลังแบบ random (auto-complete เมื่อหมดเวลา) |
+| GET | `/api/bookings/:id/countdown` | ดูสถานะ countdown (ถ้าหมดเวลา auto-complete ทันที) |
+
+#### POST /api/bookings/:id/start-countdown
+```json
+Body (optional): { "min_seconds": 10, "max_seconds": 120 }
+Response: {
+  "countdown": {
+    "booking_id": 1,
+    "status": "counting_down",
+    "countdown_seconds": 45,
+    "estimated_complete_at": "2026-03-16T10:00:45.000Z",
+    "remaining_seconds": 45,
+    "is_completed": false
+  },
+  "message": "เริ่มนับถอยหลัง 45 วินาที เมื่อหมดเวลาจะ complete อัตโนมัติ"
+}
 ```
+
+#### GET /api/bookings/:id/countdown
+```json
+Response (กำลังนับ): {
+  "countdown": { "remaining_seconds": 20, "is_completed": false, ... },
+  "message": "เหลือเวลาอีก 20 วินาที"
+}
+Response (หมดเวลา - auto complete): {
+  "countdown": { "remaining_seconds": 0, "is_completed": true, ... },
+  "message": "หมดเวลาแล้ว! การจองเสร็จสิ้น คิวถัดไปได้รับการประมวลผลแล้ว"
+}
+```
+
+### คิว (Queue Management)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/bookings/queue?page=1&limit=10&status=waiting` | ดู bookingQueue ทั้งหมด (filter ด้วย status ได้) |
+| GET | `/api/bookings/queue/:productId` | ดูคิวทั้งหมดของสินค้า |
+| GET | `/api/bookings/queue/:productId/count` | นับจำนวนคิวที่รอ |
+| GET | `/api/bookings/queue/position/:queueId` | ดูตำแหน่งคิว (ลำดับที่เท่าไหร่) |
+| POST | `/api/bookings/from-queue/:queueId` | สร้าง booking จาก bookingQueue ID (หยิบคนจากคิวมาจองจริง) |
+| PUT | `/api/bookings/queue/:id/cancel` | ยกเลิกคิว |
+| DELETE | `/api/bookings/queue/:productId/clear` | เคลียร์คิวทั้งหมดของสินค้า |
+
+#### GET /api/bookings/queue — ดึง bookingQueue ทั้งหมด
+```
+GET /api/bookings/queue?page=1&limit=10&status=waiting
+Query params:
+  - page (default: 1)
+  - limit (default: 10)
+  - status (optional): waiting / completed / cancelled — ถ้าไม่ระบุจะดึงทั้งหมด
+Response: {
+  "data": [ { "id": 1, "user_id": 2, "product_id": 3, "quantity": 5, "queue_number": 1, "status": "waiting", "created_at": "..." } ],
+  "pagination": { "page": 1, "limit": 10, "total": 25, "total_pages": 3 }
+}
+```
+
+#### POST /api/bookings/from-queue/:queueId — สร้าง booking จากคิว
+```
+POST /api/bookings/from-queue/5
+Response (201): {
+  "booking": { "id": 10, "user_id": 2, "product_id": 3, "quantity": 5, "status": "booked", ... },
+  "queue": { "id": 5, "status": "completed", ... },
+  "message": "สร้างการจองจากคิว #5 สำเร็จ"
+}
+```
+- เช็ค stock ก่อนจอง ถ้าไม่พอจะ error
+- อัปเดต queue status เป็น `completed`
+- ลด `available_quantity` ของสินค้า
+- สร้าง Vectorize embedding ให้ booking ใหม่
 
 ### Booking Flow
 1. ถ้า `available_quantity >= quantity` → จองสำเร็จ, ลด stock, สร้าง Vectorize embedding
 2. ถ้า `available_quantity < quantity` → เข้า Queue อัตโนมัติ (ไม่สร้าง embedding)
 3. เมื่อยกเลิกการจอง → คืน stock + process Queue + ลบ Vectorize vector
+4. เมื่อ complete การจอง → คืน stock + process Queue ให้คิวถัดไปจองได้อัตโนมัติ
+5. ใช้ countdown simulation → random เวลาถอยหลัง เมื่อหมดเวลา auto-complete แล้วคิวถัดไปเข้ามาได้
+6. ใช้ `from-queue` → หยิบคนจากคิวมาสร้าง booking ด้วยตัวเอง (manual)
 
 ---
 
@@ -142,6 +220,8 @@ Max size: 10MB
 | quantity | INTEGER | จำนวน |
 | status | TEXT | booked / cancelled / completed |
 | booking_date | DATETIME | วันที่จอง |
+| estimated_complete_at | DATETIME | เวลาที่คาดว่าจะเสร็จ (countdown) |
+| countdown_seconds | INTEGER | จำนวนวินาทีถอยหลังที่ random ได้ |
 
 ### bookingQueue
 | Column | Type | Description |

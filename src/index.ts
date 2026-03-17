@@ -12,18 +12,10 @@ import { handleFileRoutes } from "./routes/files";
 import { LogService } from "./services/LogService";
 export { ProductQueueDO } from "./durableObjects/ProductQueueDO";
 
-interface Env {
-  MY_BUCKET: R2Bucket;
-  DB: D1Database;
-  USERS_CACHE: KVNamespace;
-  USERS_Profile: KVNamespace;
-  R2_DOMAIN: string;
-  JWT_SECRET?: string;
-  IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
-  PRODUCTS_POC_INDEX: VectorizeIndex;
-  BOOKINGS_INDEX: VectorizeIndex;
-  AI: Ai;
-  PRODUCT_QUEUE: DurableObjectNamespace;
+declare global {
+  interface Env {
+    IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
+  }
 }
 
 export default {
@@ -186,7 +178,7 @@ export default {
 	 * Queue Consumer Handler
 	 * จัดการ messages จาก Image Resize Queue
 	 */
-	async queue(batch: MessageBatch<ImageResizeMessage>, env: Env): Promise<void> {
-		await handleImageResizeQueue(batch, env);
+	async queue(batch, env, _ctx): Promise<void> {
+		await handleImageResizeQueue(batch as MessageBatch<ImageResizeMessage>, env);
 	},
 } satisfies ExportedHandler<Env>;

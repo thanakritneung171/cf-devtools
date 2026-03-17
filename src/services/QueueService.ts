@@ -80,12 +80,81 @@ export class QueueService {
       .run();
   }
 
+  async getAllQueues(page: number = 1, limit: number = 10, status?: string): Promise<{ data: BookingQueue[]; total: number }> {
+    let countSql = 'SELECT COUNT(*) as count FROM bookingQueue';
+    let dataSql = 'SELECT * FROM bookingQueue';
+    const binds: any[] = [];
+
+    if (status) {
+      countSql += ' WHERE status = ?';
+      dataSql += ' WHERE status = ?';
+      binds.push(status);
+    }
+
+    dataSql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+
+    const countResult = await this.db
+      .prepare(countSql)
+      .bind(...binds)
+      .first<{ count: number }>();
+
+    const offset = (page - 1) * limit;
+    const results = await this.db
+      .prepare(dataSql)
+      .bind(...binds, limit, offset)
+      .all<BookingQueue>();
+
+    return {
+      data: results.results || [],
+      total: countResult?.count || 0,
+    };
+  }
+
+  async getQueueById(id: number): Promise<BookingQueue | null> {
+    return await this.db
+      .prepare('SELECT * FROM bookingQueue WHERE id = ?')
+      .bind(id)
+      .first<BookingQueue>() || null;
+  }
+
   async getQueueByProduct(productId: number): Promise<BookingQueue[]> {
     const results = await this.db
       .prepare("SELECT * FROM bookingQueue WHERE product_id = ? AND status = 'waiting' ORDER BY queue_number ASC")
       .bind(productId)
       .all<BookingQueue>();
     return results.results || [];
+  }
+
+  async clearQueueByProduct(productId: number): Promise<number> {
+    const result = await this.db
+      .prepare("UPDATE bookingQueue SET status = 'cancelled' WHERE product_id = ? AND status = 'waiting'")
+      .bind(productId)
+      .run();
+    return result.meta.changes ?? 0;
+  }
+
+  async getQueueCount(productId: number): Promise<number> {
+    const result = await this.db
+      .prepare("SELECT COUNT(*) as count FROM bookingQueue WHERE product_id = ? AND status = 'waiting'")
+      .bind(productId)
+      .first<{ count: number }>();
+    return result?.count || 0;
+  }
+
+  async getQueuePosition(queueId: number): Promise<{ position: number; total: number } | null> {
+    const item = await this.db
+      .prepare('SELECT * FROM bookingQueue WHERE id = ?')
+      .bind(queueId)
+      .first<BookingQueue>();
+    if (!item || item.status !== 'waiting') return null;
+
+    const ahead = await this.db
+      .prepare("SELECT COUNT(*) as count FROM bookingQueue WHERE product_id = ? AND status = 'waiting' AND queue_number < ?")
+      .bind(item.product_id, item.queue_number)
+      .first<{ count: number }>();
+
+    const total = await this.getQueueCount(item.product_id);
+    return { position: (ahead?.count || 0) + 1, total };
   }
 
   async cancelQueue(id: number): Promise<BookingQueue | null> {

@@ -1,5 +1,27 @@
 interface Env {
   VECTORIZE: VectorizeIndex;
+  PRODUCTS_POC_INDEX: VectorizeIndex;
+  BOOKINGS_INDEX: VectorizeIndex;
+  DB: D1Database;
+  MY_BUCKET: R2Bucket;
+}
+
+const BATCH_SIZE = 100;
+
+async function fetchVectorsInBatches(index: VectorizeIndex, ids: string[]): Promise<VectorizeVector[]> {
+  const all: VectorizeVector[] = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const batch = ids.slice(i, i + BATCH_SIZE);
+    const vectors = await index.getByIds(batch);
+    all.push(...vectors);
+  }
+  return all;
+}
+
+async function upsertVectorsInBatches(index: VectorizeIndex, vectors: VectorizeVector[]): Promise<void> {
+  for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
+    await index.upsert(vectors.slice(i, i + BATCH_SIZE));
+  }
 }
 
 export async function handleVectorizeRoutes(
@@ -53,6 +75,22 @@ export async function handleVectorizeRoutes(
     }
   }
 
+  // GET /api/vectorize/backups — แสดงรายการ backup files ใน R2
+  if (url.pathname === '/api/vectorize/backups' && method === 'GET') {
+    try {
+      const prefix = url.searchParams.get('prefix') || 'vectorize-backup/';
+      const listed = await env.MY_BUCKET.list({ prefix });
+      const files = (listed.objects || []).map((obj) => ({
+        key: obj.key,
+        size: obj.size,
+        uploaded: obj.uploaded,
+      }));
+      return Response.json({ backups: files, count: files.length });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ดึงรายการ backup ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/vectorize/:id — ดึง vector ตาม ID
   if (url.pathname.startsWith('/api/vectorize/') && method === 'GET') {
     try {
@@ -86,6 +124,90 @@ export async function handleVectorizeRoutes(
       return Response.json({ message: 'ลบสำเร็จ', result });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ลบไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // POST /api/vectorize/backup — backup vectors จาก Vectorize index ลง R2
+  // Body: { index: "products_poc" | "bookings" | "all" }
+  if (url.pathname === '/api/vectorize/backup' && method === 'POST') {
+    try {
+      const body = await request.json<{ index?: string }>();
+      const indexName = body.index || 'all';
+
+      if (!['products_poc', 'bookings', 'all'].includes(indexName)) {
+        return Response.json({ error: 'index ต้องเป็น products_poc, bookings, หรือ all' }, { status: 400 });
+      }
+
+      const results: { index: string; key: string; count: number }[] = [];
+
+      if (indexName === 'products_poc' || indexName === 'all') {
+        const rows = await env.DB.prepare('SELECT id FROM productsPOC').all<{ id: number }>();
+        const ids = (rows.results || []).map((r) => String(r.id));
+        const vectors = await fetchVectorsInBatches(env.PRODUCTS_POC_INDEX, ids);
+        const backedUpAt = new Date().toISOString();
+        const key = `vectorize-backup/products_poc/${backedUpAt}.json`;
+        await env.MY_BUCKET.put(
+          key,
+          JSON.stringify({ index: 'PRODUCTS_POC_INDEX', backed_up_at: backedUpAt, count: vectors.length, vectors }),
+          { httpMetadata: { contentType: 'application/json' } }
+        );
+        results.push({ index: 'products_poc', key, count: vectors.length });
+      }
+
+      if (indexName === 'bookings' || indexName === 'all') {
+        const rows = await env.DB.prepare('SELECT id FROM bookings').all<{ id: number }>();
+        const ids = (rows.results || []).map((r) => String(r.id));
+        const vectors = await fetchVectorsInBatches(env.BOOKINGS_INDEX, ids);
+        const backedUpAt = new Date().toISOString();
+        const key = `vectorize-backup/bookings/${backedUpAt}.json`;
+        await env.MY_BUCKET.put(
+          key,
+          JSON.stringify({ index: 'BOOKINGS_INDEX', backed_up_at: backedUpAt, count: vectors.length, vectors }),
+          { httpMetadata: { contentType: 'application/json' } }
+        );
+        results.push({ index: 'bookings', key, count: vectors.length });
+      }
+
+      return Response.json({ message: 'Backup สำเร็จ', results });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Backup ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // POST /api/vectorize/restore — restore vectors จาก backup ใน R2 กลับเข้า Vectorize
+  // Body: { key: "vectorize-backup/products_poc/2026-03-17T..." }
+  if (url.pathname === '/api/vectorize/restore' && method === 'POST') {
+    try {
+      const body = await request.json<{ key: string }>();
+      if (!body.key) {
+        return Response.json({ error: 'กรุณาระบุ key ของไฟล์ backup ใน R2' }, { status: 400 });
+      }
+
+      const object = await env.MY_BUCKET.get(body.key);
+      if (!object) {
+        return Response.json({ error: 'ไม่พบไฟล์ backup' }, { status: 404 });
+      }
+
+      const data = await object.json<{ index: string; vectors: VectorizeVector[] }>();
+      if (!data.vectors || data.vectors.length === 0) {
+        return Response.json({ message: 'ไม่มี vectors ใน backup นี้', restored: 0 });
+      }
+
+      const indexMap: Record<string, VectorizeIndex> = {
+        PRODUCTS_POC_INDEX: env.PRODUCTS_POC_INDEX,
+        BOOKINGS_INDEX: env.BOOKINGS_INDEX,
+      };
+
+      const targetIndex = indexMap[data.index];
+      if (!targetIndex) {
+        return Response.json({ error: `ไม่รู้จัก index: ${data.index}` }, { status: 400 });
+      }
+
+      await upsertVectorsInBatches(targetIndex, data.vectors);
+
+      return Response.json({ message: 'Restore สำเร็จ', index: data.index, restored: data.vectors.length });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Restore ไม่สำเร็จ' }, { status: 500 });
     }
   }
 
