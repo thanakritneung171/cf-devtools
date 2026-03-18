@@ -123,6 +123,129 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // GET /api/productPOC/smart-search?q=...&minPrice=...&maxPrice=...&topK=... — smart semantic search with filters
+  if (url.pathname === '/api/productPOC/smart-search' && method === 'GET') {
+    try {
+      const q = url.searchParams.get('q');
+      if (!q) return Response.json({ error: 'กรุณาระบุ query parameter q' }, { status: 400 });
+
+      const topK = parseInt(url.searchParams.get('topK') || '10');
+      const minPrice = url.searchParams.get('minPrice') ? parseFloat(url.searchParams.get('minPrice')!) : undefined;
+      const maxPrice = url.searchParams.get('maxPrice') ? parseFloat(url.searchParams.get('maxPrice')!) : undefined;
+
+      // Generate embedding จาก query text
+      const embedding = await generateEmbedding(env.AI, q);
+
+      // Query vectorize with higher topK to allow post-filtering
+      const fetchK = Math.min(topK * 3, 50);
+      const matches = await env.PRODUCTS_POC_INDEX.query(embedding, {
+        topK: fetchK,
+        returnMetadata: 'all',
+      });
+
+      if (!matches.matches || matches.matches.length === 0) {
+        return Response.json({ results: [], total: 0 });
+      }
+
+      // Filter by price range from metadata
+      let filtered = matches.matches;
+      if (minPrice !== undefined || maxPrice !== undefined) {
+        filtered = filtered.filter((m) => {
+          const price = parseFloat(String(m.metadata?.price || '0'));
+          if (minPrice !== undefined && price < minPrice) return false;
+          if (maxPrice !== undefined && price > maxPrice) return false;
+          return true;
+        });
+      }
+
+      // Limit to topK after filtering
+      filtered = filtered.slice(0, topK);
+
+      if (filtered.length === 0) {
+        return Response.json({ results: [], total: 0 });
+      }
+
+      // Fetch full product data from D1
+      const ids = filtered.map((m) => m.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const products = await env.DB.prepare(
+        `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE p.id IN (${placeholders})`
+      )
+        .bind(...ids.map(Number))
+        .all<any>();
+
+      const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
+      const scoreMap = new Map(filtered.map((m) => [m.id, m.score]));
+      const results = (products.results ?? [])
+        .map((p: any) => {
+          const { file_path, ...product } = p;
+          if (file_path) product.image_url = `${r2Domain}/${file_path}`;
+          return { ...product, score: scoreMap.get(String(p.id)) ?? 0 };
+        })
+        .sort((a: any, b: any) => b.score - a.score);
+
+      return Response.json({ query: q, results, total: results.length });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Smart search ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // GET /api/productPOC/:id/recommendations?topK=... — สินค้าแนะนำจาก vector similarity
+  const recoMatch = url.pathname.match(/^\/api\/productPOC\/(\d+)\/recommendations$/);
+  if (recoMatch && method === 'GET') {
+    try {
+      const productId = parseInt(recoMatch[1]);
+      const topK = parseInt(url.searchParams.get('topK') || '5');
+
+      // ดึง vector ของสินค้าต้นทาง
+      const vectors = await env.PRODUCTS_POC_INDEX.getByIds([String(productId)]);
+      if (!vectors || vectors.length === 0) {
+        return Response.json({ error: 'ไม่พบ vector ของสินค้านี้' }, { status: 404 });
+      }
+
+      const sourceVector = vectors[0].values;
+      if (!sourceVector) {
+        return Response.json({ error: 'ไม่พบ embedding ของสินค้านี้' }, { status: 404 });
+      }
+
+      // Query หาสินค้าที่คล้ายกัน (topK + 1 เพื่อตัดตัวเองออก)
+      const matches = await env.PRODUCTS_POC_INDEX.query(sourceVector, {
+        topK: topK + 1,
+        returnMetadata: 'all',
+      });
+
+      // ตัดสินค้าต้นทางออกจากผลลัพธ์
+      const filtered = (matches.matches || []).filter((m) => m.id !== String(productId)).slice(0, topK);
+
+      if (filtered.length === 0) {
+        return Response.json({ product_id: productId, recommendations: [], total: 0 });
+      }
+
+      // Fetch full product data from D1
+      const ids = filtered.map((m) => m.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const products = await env.DB.prepare(
+        `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE p.id IN (${placeholders})`
+      )
+        .bind(...ids.map(Number))
+        .all<any>();
+
+      const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
+      const scoreMap = new Map(filtered.map((m) => [m.id, m.score]));
+      const recommendations = (products.results ?? [])
+        .map((p: any) => {
+          const { file_path, ...product } = p;
+          if (file_path) product.image_url = `${r2Domain}/${file_path}`;
+          return { ...product, similarity_score: scoreMap.get(String(p.id)) ?? 0 };
+        })
+        .sort((a: any, b: any) => b.similarity_score - a.similarity_score);
+
+      return Response.json({ product_id: productId, recommendations, total: recommendations.length });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ดึงสินค้าแนะนำไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC/search/fast?q=... — semantic search (metadata only)
   if (url.pathname === '/api/productPOC/search/fast' && method === 'GET') {
     try {
