@@ -6,12 +6,13 @@ interface Env {
   MY_BUCKET: R2Bucket;
 }
 
-const BATCH_SIZE = 100;
+const GET_BY_IDS_BATCH_SIZE = 20; // Vectorize getByIds limit is 20
+const UPSERT_BATCH_SIZE = 100;
 
 async function fetchVectorsInBatches(index: VectorizeIndex, ids: string[]): Promise<VectorizeVector[]> {
   const all: VectorizeVector[] = [];
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const batch = ids.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < ids.length; i += GET_BY_IDS_BATCH_SIZE) {
+    const batch = ids.slice(i, i + GET_BY_IDS_BATCH_SIZE);
     const vectors = await index.getByIds(batch);
     all.push(...vectors);
   }
@@ -19,8 +20,8 @@ async function fetchVectorsInBatches(index: VectorizeIndex, ids: string[]): Prom
 }
 
 async function upsertVectorsInBatches(index: VectorizeIndex, vectors: VectorizeVector[]): Promise<void> {
-  for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
-    await index.upsert(vectors.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < vectors.length; i += UPSERT_BATCH_SIZE) {
+    await index.upsert(vectors.slice(i, i + UPSERT_BATCH_SIZE));
   }
 }
 
@@ -31,6 +32,7 @@ export async function handleVectorizeRoutes(
   method: string
 ): Promise<Response | null> {
 
+  console.log(`Received request: ${method} ${url.pathname}`);
   // POST /api/vectorize/insert
   // Body: { vectors: [{ id: string, values: number[], metadata?: Record<string, string> }] }
   if (url.pathname === '/api/vectorize/insert' && method === 'POST') {
