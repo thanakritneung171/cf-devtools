@@ -17,6 +17,7 @@ declare namespace Cloudflare {
 		PRODUCTS_POC_INDEX: VectorizeIndex;
 		BOOKINGS_INDEX: VectorizeIndex;
 		AI: Ai;
+        PRODUCT_QUEUE: DurableObjectNamespace;
 	}
 }
 interface Env extends Cloudflare.Env {}

@@ -17,7 +17,11 @@
 		"bindings": [
 			{
 			"name": "PRODUCT_QUEUE",
-			"class_name": "ProductQueueDO"
+			"class_name": "TicketQueueDO"
+			},
+			{
+			"name": "TICKET_QUEUE_TEST",
+			"class_name": "TicketQueueDOTest"
 			}
 		]
 	},
@@ -25,6 +29,14 @@
 		{
 			"tag": "v1",
 			"new_classes": ["ProductQueueDO"]
+		},
+		{
+			"tag": "v2",
+			"renamed_classes": [{ "from": "ProductQueueDO", "to": "TicketQueueDO" }]
+		},
+		{
+			"tag": "v3",
+			"new_classes": ["TicketQueueDOTest"]
 		}
 	],
 	"r2_buckets": [

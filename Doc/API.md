@@ -4,11 +4,12 @@
 
 | Service | ใช้สำหรับ | Binding |
 |---------|----------|---------|
-| **D1** (SQLite) | productsPOC, bookings, bookingQueue, Logs, files, users, posts | `DB` |
+| **D1** (SQLite) | productsPOC, bookings, product_queue, Logs, files, users, posts | `DB` |
 | **KV** | Cache user data, token revocation | `USERS_CACHE` |
 | **R2** | File/image storage | `MY_BUCKET` |
 | **Vectorize + AI** | Vector search (products, productsPOC, bookings, documents) | `VECTORIZE`, `PRODUCTS_INDEX`, `PRODUCTS_POC_INDEX`, `BOOKINGS_INDEX`, `AI` |
-| **Queue** | Async image resize | `IMAGE_RESIZE_QUEUE` |
+| **Durable Object** | Product Queue (legacy, ย้ายไป service แล้ว) | `PRODUCT_QUEUE` |
+| **Durable Object** | Ticket Queue (ตัวอย่างระบบจองตั๋ว) | `TICKET_QUEUE` |
 
 ---
 
@@ -54,97 +55,167 @@ Header: Authorization: Bearer <token>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/bookings` | จองสินค้า (auto queue ถ้าเกิน) + สร้าง Vectorize embedding |
+| POST | `/api/bookings` | จองสินค้า (สร้าง booking + product_queue อัตโนมัติ) |
 | GET | `/api/bookings?page=1&limit=10` | ดูการจองทั้งหมด |
-| GET | `/api/bookings/:id` | ดูการจองตาม ID |
+| GET | `/api/bookings/:id` | ดูการจองตาม ID (พร้อม product_queue ที่เชื่อม) |
 | GET | `/api/bookings/user/:userId` | ดูการจองของ user |
 | GET | `/api/bookings/product/:productId` | ดูการจองของสินค้า |
-| PUT | `/api/bookings/:id/complete` | เสร็จสิ้นการจอง (คืน stock + process queue) + ลบ Vectorize vector |
-| PUT | `/api/bookings/:id/cancel` | ยกเลิกการจอง (คืน stock + process queue) + ลบ Vectorize vector |
+| PUT | `/api/bookings/:id/complete` | เสร็จสิ้น (ไม่คืน stock, product_queue → completed, promote WAITING) |
+| PUT | `/api/bookings/:id/cancel` | ยกเลิก (คืน stock, ลบ product_queue, promote WAITING) |
 | GET | `/api/bookings/search?q=keyword&topK=5` | Semantic search + ข้อมูลจาก D1 |
 | GET | `/api/bookings/search/fast?q=keyword&topK=5` | Semantic search (metadata only, เร็วกว่า) |
 
-### Countdown Simulation (จำลองนับถอยหลัง)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/bookings/:id/start-countdown` | เริ่มนับถอยหลังแบบ random (auto-complete เมื่อหมดเวลา) |
-| GET | `/api/bookings/:id/countdown` | ดูสถานะ countdown (ถ้าหมดเวลา auto-complete ทันที) |
-
-#### POST /api/bookings/:id/start-countdown
+#### POST /api/bookings — สร้างการจอง
 ```json
-Body (optional): { "min_seconds": 10, "max_seconds": 120 }
-Response: {
-  "countdown": {
-    "booking_id": 1,
-    "status": "counting_down",
-    "countdown_seconds": 45,
-    "estimated_complete_at": "2026-03-16T10:00:45.000Z",
-    "remaining_seconds": 45,
-    "is_completed": false
-  },
-  "message": "เริ่มนับถอยหลัง 45 วินาที เมื่อหมดเวลาจะ complete อัตโนมัติ"
-}
-```
-
-#### GET /api/bookings/:id/countdown
-```json
-Response (กำลังนับ): {
-  "countdown": { "remaining_seconds": 20, "is_completed": false, ... },
-  "message": "เหลือเวลาอีก 20 วินาที"
-}
-Response (หมดเวลา - auto complete): {
-  "countdown": { "remaining_seconds": 0, "is_completed": true, ... },
-  "message": "หมดเวลาแล้ว! การจองเสร็จสิ้น คิวถัดไปได้รับการประมวลผลแล้ว"
-}
-```
-
-### คิว (Queue Management)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/bookings/queue?page=1&limit=10&status=waiting` | ดู bookingQueue ทั้งหมด (filter ด้วย status ได้) |
-| GET | `/api/bookings/queue/:productId` | ดูคิวทั้งหมดของสินค้า |
-| GET | `/api/bookings/queue/:productId/count` | นับจำนวนคิวที่รอ |
-| GET | `/api/bookings/queue/position/:queueId` | ดูตำแหน่งคิว (ลำดับที่เท่าไหร่) |
-| POST | `/api/bookings/from-queue/:queueId` | สร้าง booking จาก bookingQueue ID (หยิบคนจากคิวมาจองจริง) |
-| PUT | `/api/bookings/queue/:id/cancel` | ยกเลิกคิว |
-| DELETE | `/api/bookings/queue/:productId/clear` | เคลียร์คิวทั้งหมดของสินค้า |
-
-#### GET /api/bookings/queue — ดึง bookingQueue ทั้งหมด
-```
-GET /api/bookings/queue?page=1&limit=10&status=waiting
-Query params:
-  - page (default: 1)
-  - limit (default: 10)
-  - status (optional): waiting / completed / cancelled — ถ้าไม่ระบุจะดึงทั้งหมด
-Response: {
-  "data": [ { "id": 1, "user_id": 2, "product_id": 3, "quantity": 5, "queue_number": 1, "status": "waiting", "created_at": "..." } ],
-  "pagination": { "page": 1, "limit": 10, "total": 25, "total_pages": 3 }
-}
-```
-
-#### POST /api/bookings/from-queue/:queueId — สร้าง booking จากคิว
-```
-POST /api/bookings/from-queue/5
+Body: { "user_id": 1, "product_id": 2, "quantity": 1 }
 Response (201): {
-  "booking": { "id": 10, "user_id": 2, "product_id": 3, "quantity": 5, "status": "booked", ... },
-  "queue": { "id": 5, "status": "completed", ... },
-  "message": "สร้างการจองจากคิว #5 สำเร็จ"
+  "booking": { "id": 1, "status": "booked", ... },
+  "queue_status": "ACTIVE",
+  "queue_position": 1,
+  "message": "จองสินค้าสำเร็จ (ACTIVE)"
 }
 ```
-- เช็ค stock ก่อนจอง ถ้าไม่พอจะ error
-- อัปเดต queue status เป็น `completed`
-- ลด `available_quantity` ของสินค้า
-- สร้าง Vectorize embedding ให้ booking ใหม่
+
+**เงื่อนไขสำคัญ (เช็คตามลำดับก่อนสร้าง booking):**
+1. ตรวจสอบสินค้า — ถ้าไม่พบ product → error
+2. ตรวจสอบ `total_quantity` — จองเกินไม่ได้
+3. ตรวจสอบ `available_quantity` — stock ไม่พอ → error
+4. **ตรวจสอบคิวซ้ำ** — ถ้า user มีคิว ACTIVE/WAITING อยู่แล้วใน product เดียวกัน → error (ไม่สร้าง booking, ไม่หัก stock)
+5. ถ้าผ่านทั้งหมด → สร้าง booking + หัก stock + เพิ่ม product_queue
+- ถ้า product_id มี ACTIVE < 2 คน → `booking.status = booked`, `product_queue.status = ACTIVE`
+- ถ้า product_id มี ACTIVE >= 2 คน → `booking.status = WAITING`, `product_queue.status = WAITING`
+
+#### PUT /api/bookings/:id/complete — เสร็จสิ้นการจอง
+- booking.status → `completed`
+- **ลบ product_queue record** ของ booking นั้น
+- **ไม่คืน available_quantity** (stock ถูกใช้ไปแล้ว)
+- promote คิว WAITING ถัดไป → ACTIVE (booking ของเขาเปลี่ยนเป็น `booked`)
+
+#### PUT /api/bookings/:id/cancel — ยกเลิกการจอง
+- booking.status → `cancelled`
+- **คืน available_quantity** (stock กลับมา)
+- **ลบ product_queue record** ของ booking นั้น
+- promote คิว WAITING ถัดไป → ACTIVE (booking ของเขาเปลี่ยนเป็น `booked`)
 
 ### Booking Flow
-1. ถ้า `available_quantity >= quantity` → จองสำเร็จ, ลด stock, สร้าง Vectorize embedding
-2. ถ้า `available_quantity < quantity` → เข้า Queue อัตโนมัติ (ไม่สร้าง embedding)
-3. เมื่อยกเลิกการจอง → คืน stock + process Queue + ลบ Vectorize vector
-4. เมื่อ complete การจอง → คืน stock + process Queue ให้คิวถัดไปจองได้อัตโนมัติ
-5. ใช้ countdown simulation → random เวลาถอยหลัง เมื่อหมดเวลา auto-complete แล้วคิวถัดไปเข้ามาได้
-6. ใช้ `from-queue` → หยิบคนจากคิวมาสร้าง booking ด้วยตัวเอง (manual)
+1. เช็คสินค้า → เช็ค quantity → **เช็คคิวซ้ำก่อน** (ถ้าซ้ำ throw error ไม่สร้าง booking ไม่หัก stock)
+2. สร้าง booking + หัก stock + เพิ่ม product_queue ด้วย booking_id
+3. ถ้า ACTIVE < 2 → status `booked` + `ACTIVE` (จองได้เลย)
+4. ถ้า ACTIVE >= 2 → status `WAITING` + `WAITING` (รอคิว)
+5. Complete → ไม่คืน stock, ลบ product_queue, promote WAITING ถัดไปเป็น ACTIVE
+6. Cancel → คืน stock, ลบ product_queue, promote WAITING ถัดไปเป็น ACTIVE
+
+### ข้อจำกัด
+- ผู้ใช้แต่ละคนจองสินค้าเดียวกันได้แค่ 1 ครั้ง (ถ้ามีคิว ACTIVE/WAITING อยู่แล้วจะไม่สามารถจองซ้ำได้)
+- ACTIVE สูงสุด 2 คนต่อ product_id
+
+---
+
+## Product Queue API (Auth Required)
+
+> ย้ายจาก Durable Object `/queue/*` มาเป็น routes/services structure แบบเดียวกับ API อื่น
+> ใช้ logic เดียวกับ `ProductQueueDO.ts` เป๊ะ (join, status, leave)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/product-queue/join` | เข้าคิว (เหมือน DO `/join`) |
+| GET | `/api/product-queue/status?productId=...&userId=...` | ดูสถานะคิว (เหมือน DO `/queue/status`) |
+| POST | `/api/product-queue/leave` | ออกจากคิว DELETE + promote (เหมือน DO `/leave`) |
+
+#### POST /api/product-queue/join
+```json
+Body: { "userId": 1, "productId": 2, "bookingId": 5 }
+Response: { "status": "ACTIVE", "position": 1 }
+```
+- ถ้า ACTIVE < 2 → status = `ACTIVE`
+- ถ้า ACTIVE >= 2 → status = `WAITING`
+- `bookingId` optional (ใช้เชื่อมกับ bookings)
+
+#### GET /api/product-queue/status
+```json
+Query: ?productId=2&userId=1
+Response: {
+  "inQueue": true,
+  "position": 2,
+  "peopleAhead": 1,
+  "total": 5
+}
+```
+
+#### POST /api/product-queue/leave
+```json
+Body: { "userId": 1, "productId": 2 }
+Response: { "message": "left queue" }
+```
+- DELETE record ของ user จากคิว
+- ถ้า ACTIVE < 2 → promote WAITING ถัดไปเป็น ACTIVE
+
+---
+
+## Ticket Queue API — Durable Object (No Auth)
+
+> ตัวอย่างระบบจองตั๋วที่ใช้ Durable Object (`TicketQueueDO`) เพื่อ single-threaded per product
+> ใช้ตาราง `ticket_queue` (schema เหมือน `product_queue` แต่แยกตาราง)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/ticket-queue/join` | เข้าคิว (เช็คซ้ำ + รับ bookingId) |
+| GET | `/api/ticket-queue/status?productId=...&userId=...` | ดูสถานะคิว |
+| POST | `/api/ticket-queue/leave` | ออกจากคิว (DELETE + promote) |
+| POST | `/api/ticket-queue/leave-completed` | เสร็จแล้ว → COMPLETED + promote |
+| POST | `/api/ticket-queue/leave-cancelled` | ยกเลิก → CANCELLED + promote |
+| GET | `/api/ticket-queue/active-count?productId=...` | นับจำนวน ACTIVE |
+
+#### POST /api/ticket-queue/join
+```json
+Body: { "userId": 1, "productId": 2, "bookingId": 5 }
+Response: { "queueId": 10, "status": "ACTIVE", "position": 1, "bookingId": 5 }
+```
+- ห้ามจองซ้ำ (ถ้ามี ACTIVE/WAITING อยู่แล้ว → 409)
+- `bookingId` optional
+- ถ้า ACTIVE < 2 → status = `ACTIVE`, ถ้า >= 2 → `WAITING`
+
+#### GET /api/ticket-queue/status
+```json
+Query: ?productId=2&userId=1
+Response: { "inQueue": true, "position": 2, "peopleAhead": 1, "total": 5 }
+```
+
+#### POST /api/ticket-queue/leave
+```json
+Body: { "userId": 1, "productId": 2 }
+Response: { "message": "left queue" }
+```
+
+#### POST /api/ticket-queue/leave-completed
+```json
+Body: { "userId": 1, "productId": 2 }
+Response: { "message": "completed" }
+```
+- เปลี่ยน status เป็น `COMPLETED` + promote WAITING ถัดไป
+
+#### POST /api/ticket-queue/leave-cancelled
+```json
+Body: { "userId": 1, "productId": 2 }
+Response: { "message": "cancelled" }
+```
+- เปลี่ยน status เป็น `CANCELLED` + promote WAITING ถัดไป
+
+#### GET /api/ticket-queue/active-count
+```json
+Query: ?productId=2
+Response: { "activeCount": 1, "limit": 2 }
+```
+
+### Flow
+```
+POST /api/ticket-queue/join
+  → ticketQueue.ts route
+  → env.TICKET_QUEUE.idFromName(productId)
+  → stub.fetch("/join")
+  → TicketQueueDO (single-threaded per product)
+  → D1 (ticket_queue table)
+```
 
 ---
 
@@ -206,8 +277,8 @@ Max size: 10MB
 | product_name | TEXT | ชื่อสินค้า |
 | description | TEXT | รายละเอียด |
 | price | REAL | ราคา |
-| total_quantity | INTEGER | จำนวนทั้งหมด |
-| available_quantity | INTEGER | จำนวนที่เหลือ |
+| total_quantity | INTEGER | จำนวนทั้งหมด (สูงสุดที่จองได้) |
+| available_quantity | INTEGER | จำนวนที่ว่าง (ลดเมื่อจอง, คืนเมื่อ cancel) |
 | created_at | DATETIME | วันที่สร้าง |
 | updated_at | DATETIME | วันที่แก้ไข |
 
@@ -218,21 +289,47 @@ Max size: 10MB
 | user_id | INTEGER FK | ผู้จอง |
 | product_id | INTEGER FK | สินค้าที่จอง |
 | quantity | INTEGER | จำนวน |
-| status | TEXT | booked / cancelled / completed |
+| status | TEXT | booked / WAITING / cancelled / completed |
 | booking_date | DATETIME | วันที่จอง |
-| estimated_complete_at | DATETIME | เวลาที่คาดว่าจะเสร็จ (countdown) |
-| countdown_seconds | INTEGER | จำนวนวินาทีถอยหลังที่ random ได้ |
 
-### bookingQueue
+### product_queue
 | Column | Type | Description |
 |--------|------|-------------|
-| id | INTEGER PK | รหัสคิว |
-| user_id | INTEGER FK | ผู้ใช้ในคิว |
-| product_id | INTEGER FK | สินค้า |
-| quantity | INTEGER | จำนวนที่ต้องการ |
-| queue_number | INTEGER | ลำดับคิว |
-| status | TEXT | waiting / completed / cancelled |
-| created_at | DATETIME | วันที่เข้าคิว |
+| id | INTEGER PK AUTOINCREMENT | รหัสคิว |
+| product_id | INTEGER NOT NULL | สินค้า |
+| user_id | INTEGER NOT NULL | ผู้ใช้ |
+| booking_id | INTEGER FK | เชื่อมกับ bookings.id |
+| status | TEXT DEFAULT 'WAITING' | ACTIVE / WAITING |
+| created_at | TEXT DEFAULT CURRENT_TIMESTAMP | วันที่เข้าคิว |
+
+**กฎ:**
+- ACTIVE สูงสุด 2 คนต่อ product_id
+- เมื่อมีคน leave (complete/cancel) → promote WAITING ถัดไปเป็น ACTIVE
+- ผู้ใช้แต่ละคนมีคิว ACTIVE/WAITING ได้แค่ 1 รายการต่อ product_id (ป้องกันจองซ้ำ)
+
+**Indexes:**
+- `idx_product_queue_booking` — booking_id
+- `idx_product_queue_status` — product_id, status
+- `idx_product_queue_user` — product_id, user_id
+
+### ticket_queue
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PK AUTOINCREMENT | รหัสคิว |
+| product_id | INTEGER NOT NULL | สินค้า |
+| user_id | INTEGER NOT NULL | ผู้ใช้ |
+| booking_id | INTEGER | เชื่อมกับ bookings.id (optional) |
+| status | TEXT DEFAULT 'WAITING' | ACTIVE / WAITING / COMPLETED / CANCELLED |
+| created_at | TEXT DEFAULT CURRENT_TIMESTAMP | วันที่เข้าคิว |
+
+**กฎ:**
+- ACTIVE สูงสุด 2 คนต่อ product_id
+- เมื่อ leave-completed/leave-cancelled → promote WAITING ถัดไปเป็น ACTIVE
+- ผู้ใช้แต่ละคนมีคิว ACTIVE/WAITING ได้แค่ 1 รายการต่อ product_id (ป้องกันจองซ้ำ)
+
+**Indexes:**
+- `idx_ticket_queue_status` — product_id, status
+- `idx_ticket_queue_user` — product_id, user_id
 
 ### Logs
 | Column | Type | Description |

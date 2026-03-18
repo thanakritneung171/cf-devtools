@@ -1,5 +1,5 @@
 import { BookingService } from '../services/BookingService';
-import { QueueService } from '../services/QueueService';
+import { ProductQueueService } from '../services/ProductQueueService';
 import { verifyRequestAuth } from '../utils/auth';
 import { CreateBookingInput } from '../types/productPOC';
 
@@ -24,13 +24,13 @@ export async function handleBookingRoutes(request: Request, env: Env, url: URL, 
   if (!url.pathname.startsWith('/api/bookings')) return null;
 
   const bookingService = new BookingService(env);
-  const queueService = new QueueService(env);
+  const productQueueService = new ProductQueueService(env);
 
   // Auth required for all routes
   const authCheck = await verifyRequestAuth(request, env);
   if (authCheck instanceof Response) return authCheck;
 
-  // POST /api/bookings - จองสินค้า
+  // POST /api/bookings - จองสินค้า (สร้าง booking + product_queue)
   if (url.pathname === '/api/bookings' && method === 'POST') {
     try {
       const body = await request.json<CreateBookingInput>();
@@ -39,8 +39,8 @@ export async function handleBookingRoutes(request: Request, env: Env, url: URL, 
       }
       const result = await bookingService.createBooking(body);
 
-      // สร้าง Vectorize embedding ถ้าจองสำเร็จ
-      if (result.booking) {
+      // สร้าง Vectorize embedding ถ้าสถานะเป็น booked (ACTIVE)
+      if (result.booking.status === 'booked') {
         const product = await env.DB.prepare('SELECT product_name FROM productsPOC WHERE id = ?')
           .bind(body.product_id).first<{ product_name: string }>();
         const embedText = buildBookingEmbedText({
@@ -168,74 +168,36 @@ export async function handleBookingRoutes(request: Request, env: Env, url: URL, 
     try {
       const booking = await bookingService.getBookingById(parseInt(singleMatch[1]));
       if (!booking) return Response.json({ error: 'ไม่พบการจอง' }, { status: 404 });
-      return Response.json({ data: booking });
+
+      // ดึง product_queue ที่เชื่อมกับ booking นี้ด้วย
+      const queueEntry = await productQueueService.getByBookingId(booking.id);
+      return Response.json({ data: booking, product_queue: queueEntry });
     } catch (error: any) {
       return Response.json({ error: error.message }, { status: 500 });
     }
   }
 
-  // PUT /api/bookings/:id/complete - อัปเดตสถานะเป็นเสร็จสิ้น (คืน stock + process queue)
+  // PUT /api/bookings/:id/complete — เสร็จสิ้น (ใช้ /leave logic, ไม่คืน stock)
   const completeMatch = url.pathname.match(/^\/api\/bookings\/(\d+)\/complete$/);
   if (completeMatch && method === 'PUT') {
     try {
       const bookingId = parseInt(completeMatch[1]);
       const booking = await bookingService.completeBooking(bookingId);
-      if (!booking) return Response.json({ error: 'ไม่พบการจองหรือไม่ได้อยู่ในสถานะ booked' }, { status: 404 });
+      if (!booking) return Response.json({ error: 'ไม่พบการจองหรือไม่สามารถ complete ได้' }, { status: 404 });
 
       // ลบ vector จาก Vectorize
       await env.BOOKINGS_INDEX.deleteByIds([String(bookingId)]);
 
-      return Response.json({ booking, message: 'เสร็จสิ้นการจองสำเร็จ สินค้าถูกคืน stock และ queue ถัดไปได้รับการประมวลผลแล้ว' });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // POST /api/bookings/:id/start-countdown - เริ่มจำลองนับถอยหลัง (random วินาที)
-  const countdownStartMatch = url.pathname.match(/^\/api\/bookings\/(\d+)\/start-countdown$/);
-  if (countdownStartMatch && method === 'POST') {
-    try {
-      const bookingId = parseInt(countdownStartMatch[1]);
-      let minSeconds = 10;
-      let maxSeconds = 120;
-
-      try {
-        const body = await request.json<{ min_seconds?: number; max_seconds?: number }>();
-        if (body.min_seconds) minSeconds = body.min_seconds;
-        if (body.max_seconds) maxSeconds = body.max_seconds;
-      } catch { /* ใช้ค่า default */ }
-
-      const countdown = await bookingService.startCountdown(bookingId, minSeconds, maxSeconds);
-      if (!countdown) return Response.json({ error: 'ไม่พบการจองหรือไม่ได้อยู่ในสถานะ booked' }, { status: 404 });
-
       return Response.json({
-        countdown,
-        message: `เริ่มนับถอยหลัง ${countdown.countdown_seconds} วินาที เมื่อหมดเวลาจะ complete อัตโนมัติ`,
+        booking,
+        message: 'เสร็จสิ้นการจอง product_queue เปลี่ยนเป็น completed คิว WAITING ถัดไปได้ promote เป็น ACTIVE',
       });
     } catch (error: any) {
       return Response.json({ error: error.message }, { status: 500 });
     }
   }
 
-  // GET /api/bookings/:id/countdown - ดูสถานะ countdown (ถ้าหมดเวลา auto-complete)
-  const countdownCheckMatch = url.pathname.match(/^\/api\/bookings\/(\d+)\/countdown$/);
-  if (countdownCheckMatch && method === 'GET') {
-    try {
-      const countdown = await bookingService.checkCountdown(parseInt(countdownCheckMatch[1]));
-      if (!countdown) return Response.json({ error: 'ไม่พบการจอง' }, { status: 404 });
-
-      return Response.json({
-        countdown,
-        message: countdown.is_completed
-          ? 'หมดเวลาแล้ว! การจองเสร็จสิ้น คิวถัดไปได้รับการประมวลผลแล้ว'
-          : `เหลือเวลาอีก ${countdown.remaining_seconds} วินาที`,
-      });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // PUT /api/bookings/:id/cancel - ยกเลิกการจอง
+  // PUT /api/bookings/:id/cancel — ยกเลิก (ใช้ /leave logic, คืน stock + ลบ product_queue)
   const cancelMatch = url.pathname.match(/^\/api\/bookings\/(\d+)\/cancel$/);
   if (cancelMatch && method === 'PUT') {
     try {
@@ -246,120 +208,10 @@ export async function handleBookingRoutes(request: Request, env: Env, url: URL, 
       // ลบ vector จาก Vectorize
       await env.BOOKINGS_INDEX.deleteByIds([String(bookingId)]);
 
-      return Response.json({ booking, message: 'ยกเลิกการจองสำเร็จ' });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // GET /api/bookings/queue - ดู bookingQueue ทั้งหมด
-  if (url.pathname === '/api/bookings/queue' && method === 'GET') {
-    try {
-      const page = parseInt(url.searchParams.get('page') || '1');
-      const limit = parseInt(url.searchParams.get('limit') || '10');
-      const status = url.searchParams.get('status') || undefined; // waiting / completed / cancelled
-      const result = await queueService.getAllQueues(page, limit, status);
       return Response.json({
-        data: result.data,
-        pagination: { page, limit, total: result.total, total_pages: Math.ceil(result.total / limit) },
+        booking,
+        message: 'ยกเลิกการจองสำเร็จ คืน stock แล้ว ลบ product_queue แล้ว คิว WAITING ถัดไปได้ promote เป็น ACTIVE',
       });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // POST /api/bookings/from-queue/:queueId - สร้าง booking จาก bookingQueue ID
-  const fromQueueMatch = url.pathname.match(/^\/api\/bookings\/from-queue\/(\d+)$/);
-  if (fromQueueMatch && method === 'POST') {
-    try {
-      const queueId = parseInt(fromQueueMatch[1]);
-      const result = await bookingService.createBookingFromQueue(queueId);
-      if (!result) return Response.json({ error: 'ไม่พบคิวหรือคิวไม่ได้อยู่ในสถานะ waiting' }, { status: 404 });
-
-      // สร้าง Vectorize embedding สำหรับ booking ใหม่
-      const product = await env.DB.prepare('SELECT product_name FROM productsPOC WHERE id = ?')
-        .bind(result.booking.product_id).first<{ product_name: string }>();
-      const embedText = buildBookingEmbedText({
-        user_id: result.booking.user_id,
-        product_id: result.booking.product_id,
-        quantity: result.booking.quantity,
-        product_name: product?.product_name,
-      });
-      const embedding = await generateEmbedding(env.AI, embedText);
-      await env.BOOKINGS_INDEX.insert([
-        {
-          id: String(result.booking.id),
-          values: embedding,
-          metadata: {
-            user_id: String(result.booking.user_id),
-            product_id: String(result.booking.product_id),
-            quantity: String(result.booking.quantity),
-            product_name: product?.product_name || '',
-            status: 'booked',
-          },
-        },
-      ]);
-
-      return Response.json(result, { status: 201 });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // GET /api/bookings/queue/:productId - ดูคิวของสินค้า
-  const queueMatch = url.pathname.match(/^\/api\/bookings\/queue\/(\d+)$/);
-  if (queueMatch && method === 'GET') {
-    try {
-      const queue = await queueService.getQueueByProduct(parseInt(queueMatch[1]));
-      return Response.json({ data: queue });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // GET /api/bookings/queue/:productId/count - นับจำนวนคิวที่รอ
-  const queueCountMatch = url.pathname.match(/^\/api\/bookings\/queue\/(\d+)\/count$/);
-  if (queueCountMatch && method === 'GET') {
-    try {
-      const productId = parseInt(queueCountMatch[1]);
-      const count = await queueService.getQueueCount(productId);
-      return Response.json({ product_id: productId, waiting_count: count });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // DELETE /api/bookings/queue/:productId/clear - เคลียร์คิวทั้งหมดของสินค้า
-  const queueClearMatch = url.pathname.match(/^\/api\/bookings\/queue\/(\d+)\/clear$/);
-  if (queueClearMatch && method === 'DELETE') {
-    try {
-      const productId = parseInt(queueClearMatch[1]);
-      const cleared = await queueService.clearQueueByProduct(productId);
-      return Response.json({ product_id: productId, cleared_count: cleared, message: `เคลียร์คิวสำเร็จ ${cleared} รายการ` });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // GET /api/bookings/queue/position/:queueId - ดูตำแหน่งคิว
-  const queuePosMatch = url.pathname.match(/^\/api\/bookings\/queue\/position\/(\d+)$/);
-  if (queuePosMatch && method === 'GET') {
-    try {
-      const pos = await queueService.getQueuePosition(parseInt(queuePosMatch[1]));
-      if (!pos) return Response.json({ error: 'ไม่พบคิวหรือไม่ได้อยู่ในสถานะรอ' }, { status: 404 });
-      return Response.json({ data: pos });
-    } catch (error: any) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  // PUT /api/bookings/queue/:id/cancel - ยกเลิกคิว
-  const queueCancelMatch = url.pathname.match(/^\/api\/bookings\/queue\/(\d+)\/cancel$/);
-  if (queueCancelMatch && method === 'PUT') {
-    try {
-      const item = await queueService.cancelQueue(parseInt(queueCancelMatch[1]));
-      if (!item) return Response.json({ error: 'ไม่พบคิวหรือไม่ได้อยู่ในสถานะรอ' }, { status: 404 });
-      return Response.json({ queue: item, message: 'ยกเลิกคิวสำเร็จ' });
     } catch (error: any) {
       return Response.json({ error: error.message }, { status: 500 });
     }

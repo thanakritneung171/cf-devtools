@@ -99,6 +99,8 @@ export class ProductQueueDO {
     if (url.pathname.endsWith("/leave") && method === 'POST') {
 
       const body = await request.json()
+      //const body = await request.json() as { userId: string; productId: string }
+
       const userId = body.userId
       const productId = body.productId
 

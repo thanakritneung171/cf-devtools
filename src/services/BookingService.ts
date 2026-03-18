@@ -1,5 +1,5 @@
-import { Booking, CreateBookingInput, CountdownStatus } from '../types/productPOC';
-import { QueueService } from './QueueService';
+import { Booking, CreateBookingInput } from '../types/productPOC';
+import { ProductQueueService } from './ProductQueueService';
 
 interface Env {
   DB: D1Database;
@@ -7,51 +7,114 @@ interface Env {
 
 export class BookingService {
   private db: D1Database;
-  private queueService: QueueService;
+  private productQueueService: ProductQueueService;
 
   constructor(env: Env) {
     this.db = env.DB;
-    this.queueService = new QueueService(env);
+    this.productQueueService = new ProductQueueService(env);
   }
 
-  async createBooking(data: CreateBookingInput): Promise<{ booking?: Booking; queue?: any; message: string }> {
-    // Check product availability
+  async createBooking(data: CreateBookingInput): Promise<{ booking: Booking; queue_status: string; queue_position: number; message: string }> {
+    // แปลงเป็น integer ป้องกันทศนิยม
+    const userId = Math.floor(data.user_id);
+    const productId = Math.floor(data.product_id);
+    const quantity = Math.floor(data.quantity);
+
+    // เช็คสินค้า
     const product = await this.db
       .prepare('SELECT * FROM productsPOC WHERE id = ?')
-      .bind(data.product_id)
+      .bind(productId)
       .first<any>();
 
     if (!product) {
       throw new Error('ไม่พบสินค้า');
     }
 
-    if (product.available_quantity >= data.quantity) {
-      // Enough stock - create booking and reduce available_quantity
-      const result = await this.db
-        .prepare(
-          `INSERT INTO bookings (user_id, product_id, quantity, status) VALUES (?, ?, ?, 'booked')`
-        )
-        .bind(data.user_id, data.product_id, data.quantity)
-        .run();
-
-      await this.db
-        .prepare('UPDATE productsPOC SET available_quantity = available_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .bind(data.quantity, data.product_id)
-        .run();
-
-      const booking = await this.db
-        .prepare('SELECT * FROM bookings WHERE id = ?')
-        .bind(result.meta.last_row_id)
-        .first<Booking>();
-
-      return { booking: booking!, message: 'จองสินค้าสำเร็จ' };
-    } else {
-      // Not enough stock - add to queue
-      const queue = await this.queueService.addToQueue(data.user_id, data.product_id, data.quantity);
-      return { queue, message: 'สินค้าไม่เพียงพอ เข้าคิวรอจองอัตโนมัติ' };
+    // เช็คว่าจองเกิน total_quantity ไม่ได้
+    if (quantity > product.total_quantity) {
+      throw new Error(`ไม่สามารถจองเกินจำนวนสูงสุดได้ (total_quantity = ${product.total_quantity})`);
     }
+
+    // เช็คว่าจองได้แค่ available_quantity
+    if (quantity > product.available_quantity) {
+      throw new Error(`สินค้าไม่เพียงพอ (available_quantity = ${product.available_quantity})`);
+    }
+
+    // === เช็คซ้ำก่อน — ถ้า user มีคิวอยู่แล้วใน product เดียวกัน (ACTIVE/WAITING) ห้ามจองซ้ำ ===
+    const existingQueue = await this.db
+      .prepare("SELECT id FROM product_queue WHERE product_id = ? AND user_id = ? AND status IN ('ACTIVE', 'WAITING') LIMIT 1")
+      .bind(productId, userId)
+      .first<{ id: number }>();
+
+    if (existingQueue) {
+      throw new Error(`ผู้ใช้ ${userId} มีคิวอยู่แล้วสำหรับสินค้า ${productId} ไม่สามารถจองซ้ำได้`);
+    }
+
+    // นับ ACTIVE ของ product_id นี้
+    const activeCount = await this.productQueueService.getActiveCount(productId);
+
+    // กำหนด status ตามเงื่อนไข ACTIVE < 2
+    const bookingStatus = activeCount < 2 ? 'booked' : 'WAITING';
+
+    // สร้าง booking
+    const result = await this.db
+      .prepare('INSERT INTO bookings (user_id, product_id, quantity, status) VALUES (?, ?, ?, ?)')
+      .bind(userId, productId, quantity, bookingStatus)
+      .run();
+
+    const bookingId = result.meta.last_row_id;
+
+    // ลด available_quantity
+    await this.db
+      .prepare('UPDATE productsPOC SET available_quantity = available_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(quantity, productId)
+      .run();
+
+    // เพิ่มเข้า product_queue พร้อม booking_id
+    const queueResult = await this.productQueueService.join(productId, userId, bookingId!);
+
+    const booking = await this.db
+      .prepare('SELECT * FROM bookings WHERE id = ?')
+      .bind(bookingId)
+      .first<Booking>();
+
+    const message = bookingStatus === 'booked'
+      ? 'จองสินค้าสำเร็จ (ACTIVE)'
+      : 'สินค้าถูกจอง แต่คิวเต็ม รอคิว (WAITING)';
+
+    return {
+      booking: booking!,
+      queue_status: queueResult.status,
+      queue_position: queueResult.position,
+      message,
+    };
   }
 
+  // Complete booking — ใช้ /leave logic, ไม่คืน stock
+  async completeBooking(id: number): Promise<Booking | null> {
+    const booking = await this.db
+      .prepare('SELECT * FROM bookings WHERE id = ?')
+      .bind(id)
+      .first<Booking>();
+
+    if (!booking || booking.status === 'cancelled' || booking.status === 'completed') return null;
+
+    // อัปเดต booking.status = completed
+    await this.db
+      .prepare("UPDATE bookings SET status = 'completed' WHERE id = ?")
+      .bind(id)
+      .run();
+
+    // product_queue: leave completed (ไม่คืน stock, promote WAITING ถัดไป)
+    await this.productQueueService.leaveCompleted(id, booking.product_id);
+
+    return await this.db
+      .prepare('SELECT * FROM bookings WHERE id = ?')
+      .bind(id)
+      .first<Booking>() || null;
+  }
+
+  // Cancel booking — ใช้ /leave logic, คืน stock + ลบ product_queue
   async cancelBooking(id: number): Promise<Booking | null> {
     const booking = await this.db
       .prepare('SELECT * FROM bookings WHERE id = ?')
@@ -60,20 +123,20 @@ export class BookingService {
 
     if (!booking || booking.status === 'cancelled') return null;
 
-    // Cancel booking
+    // อัปเดต booking.status = cancelled
     await this.db
       .prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
       .bind(id)
       .run();
 
-    // Return stock
+    // คืน available_quantity
     await this.db
       .prepare('UPDATE productsPOC SET available_quantity = available_quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .bind(booking.quantity, booking.product_id)
       .run();
 
-    // Process queue for this product
-    await this.queueService.processQueue(booking.product_id);
+    // product_queue: leave cancelled (ลบ record, promote WAITING ถัดไป)
+    await this.productQueueService.leaveCancelled(id, booking.product_id);
 
     return await this.db
       .prepare('SELECT * FROM bookings WHERE id = ?')
@@ -88,165 +151,20 @@ export class BookingService {
       .first<Booking>() || null;
   }
 
-  async completeBooking(id: number): Promise<Booking | null> {
-    const booking = await this.db
-      .prepare('SELECT * FROM bookings WHERE id = ?')
-      .bind(id)
-      .first<Booking>();
-
-    if (!booking || booking.status !== 'booked') return null;
-
-    // Mark as completed
-    await this.db
-      .prepare("UPDATE bookings SET status = 'completed' WHERE id = ?")
-      .bind(id)
-      .run();
-
-    // Return stock
-    await this.db
-      .prepare('UPDATE productsPOC SET available_quantity = available_quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(booking.quantity, booking.product_id)
-      .run();
-
-    // Process waiting queue
-    await this.queueService.processQueue(booking.product_id);
-
-    return await this.db
-      .prepare('SELECT * FROM bookings WHERE id = ?')
-      .bind(id)
-      .first<Booking>() || null;
-  }
-
-  async startCountdown(id: number, minSeconds: number = 10, maxSeconds: number = 120): Promise<CountdownStatus | null> {
-    const booking = await this.db
-      .prepare('SELECT * FROM bookings WHERE id = ?')
-      .bind(id)
-      .first<Booking>();
-
-    if (!booking || booking.status !== 'booked') return null;
-
-    // Random countdown between min and max seconds
-    const countdownSeconds = Math.floor(Math.random() * (maxSeconds - minSeconds + 1)) + minSeconds;
-    const now = new Date();
-    const estimatedCompleteAt = new Date(now.getTime() + countdownSeconds * 1000).toISOString();
-
-    await this.db
-      .prepare('UPDATE bookings SET countdown_seconds = ?, estimated_complete_at = ? WHERE id = ?')
-      .bind(countdownSeconds, estimatedCompleteAt, id)
-      .run();
-
-    return {
-      booking_id: id,
-      status: 'counting_down',
-      countdown_seconds: countdownSeconds,
-      estimated_complete_at: estimatedCompleteAt,
-      remaining_seconds: countdownSeconds,
-      is_completed: false,
-    };
-  }
-
-  async checkCountdown(id: number): Promise<CountdownStatus | null> {
-    const booking = await this.db
-      .prepare('SELECT * FROM bookings WHERE id = ?')
-      .bind(id)
-      .first<Booking>();
-
-    if (!booking) return null;
-
-    // ถ้ายังไม่ได้เริ่ม countdown
-    if (!booking.estimated_complete_at || !booking.countdown_seconds) {
-      return {
-        booking_id: id,
-        status: booking.status,
-        countdown_seconds: 0,
-        estimated_complete_at: '',
-        remaining_seconds: 0,
-        is_completed: booking.status === 'completed',
-      };
-    }
-
-    const now = new Date();
-    const estimatedTime = new Date(booking.estimated_complete_at);
-    const remainingMs = estimatedTime.getTime() - now.getTime();
-    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-
-    // ถ้าหมดเวลาแล้ว และยังเป็น booked → auto-complete
-    if (remainingSeconds <= 0 && booking.status === 'booked') {
-      const completed = await this.completeBooking(id);
-      return {
-        booking_id: id,
-        status: 'completed',
-        countdown_seconds: booking.countdown_seconds,
-        estimated_complete_at: booking.estimated_complete_at,
-        remaining_seconds: 0,
-        is_completed: true,
-      };
-    }
-
-    return {
-      booking_id: id,
-      status: remainingSeconds > 0 ? 'counting_down' : booking.status,
-      countdown_seconds: booking.countdown_seconds,
-      estimated_complete_at: booking.estimated_complete_at,
-      remaining_seconds: remainingSeconds,
-      is_completed: booking.status === 'completed',
-    };
-  }
-
-  async createBookingFromQueue(queueId: number): Promise<{ booking: Booking; queue: any; message: string } | null> {
-    // ดึง queue item
-    const queueItem = await this.queueService.getQueueById(queueId);
-    if (!queueItem || queueItem.status !== 'waiting') return null;
-
-    // เช็ค stock
-    const product = await this.db
-      .prepare('SELECT * FROM productsPOC WHERE id = ?')
-      .bind(queueItem.product_id)
-      .first<any>();
-
-    if (!product) throw new Error('ไม่พบสินค้า');
-
-    if (product.available_quantity < queueItem.quantity) {
-      throw new Error(`สินค้าไม่เพียงพอ (เหลือ ${product.available_quantity} ต้องการ ${queueItem.quantity})`);
-    }
-
-    // สร้าง booking
-    const result = await this.db
-      .prepare(`INSERT INTO bookings (user_id, product_id, quantity, status) VALUES (?, ?, ?, 'booked')`)
-      .bind(queueItem.user_id, queueItem.product_id, queueItem.quantity)
-      .run();
-
-    // ลด stock
-    await this.db
-      .prepare('UPDATE productsPOC SET available_quantity = available_quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(queueItem.quantity, queueItem.product_id)
-      .run();
-
-    // อัปเดต queue เป็น completed
-    await this.db
-      .prepare("UPDATE bookingQueue SET status = 'completed' WHERE id = ?")
-      .bind(queueId)
-      .run();
-
-    const booking = await this.db
-      .prepare('SELECT * FROM bookings WHERE id = ?')
-      .bind(result.meta.last_row_id)
-      .first<Booking>();
-
-    const updatedQueue = await this.queueService.getQueueById(queueId);
-
-    return {
-      booking: booking!,
-      queue: updatedQueue,
-      message: `สร้างการจองจากคิว #${queueId} สำเร็จ`,
-    };
-  }
-
-  async getBookingsByUser(userId: number): Promise<Booking[]> {
+  async getBookingsByUser(userId: number): Promise<any[]> {
     const results = await this.db
-      .prepare('SELECT * FROM bookings WHERE user_id = ? ORDER BY booking_date DESC')
+      .prepare(`
+        SELECT b.*,
+          u.first_name, u.last_name, u.email,
+          p.product_name, p.price,b.quantity * p.price as sumPrice, p.total_quantity, p.available_quantity
+        FROM bookings b
+        LEFT JOIN users u ON b.user_id = u.id
+        LEFT JOIN productsPOC p ON b.product_id = p.id
+        WHERE b.user_id = ?
+        ORDER BY b.booking_date DESC
+      `)
       .bind(userId)
-      .all<Booking>();
+      .all();
     return results.results || [];
   }
 
@@ -258,16 +176,25 @@ export class BookingService {
     return results.results || [];
   }
 
-  async getAllBookings(page: number = 1, limit: number = 10): Promise<{ data: Booking[]; total: number }> {
+  async getAllBookings(page: number = 1, limit: number = 10): Promise<{ data: any[]; total: number }> {
     const countResult = await this.db
       .prepare('SELECT COUNT(*) as count FROM bookings')
       .first<{ count: number }>();
 
     const offset = (page - 1) * limit;
     const results = await this.db
-      .prepare('SELECT * FROM bookings ORDER BY booking_date DESC LIMIT ? OFFSET ?')
+      .prepare(`
+        SELECT b.*,
+          u.first_name, u.last_name, u.email,
+          p.product_name, p.price,b.quantity * p.price as sumPrice, p.total_quantity, p.available_quantity
+        FROM bookings b
+        LEFT JOIN users u ON b.user_id = u.id
+        LEFT JOIN productsPOC p ON b.product_id = p.id
+        ORDER BY b.booking_date DESC
+        LIMIT ? OFFSET ?
+      `)
       .bind(limit, offset)
-      .all<Booking>();
+      .all();
 
     return {
       data: results.results || [],
