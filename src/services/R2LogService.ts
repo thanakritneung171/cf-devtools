@@ -11,6 +11,7 @@ export class R2LogService {
 
       const result = await this.bucket.list({
         prefix: "logpush/",
+        limit: 1000,
         cursor
       });
 
@@ -18,15 +19,18 @@ export class R2LogService {
 
       for (const obj of result.objects) {
 
-        if (!obj.key.endsWith(".gz") && !obj.key.endsWith(".json")) continue;
-
-        const file = await this.bucket.get(obj.key);
-        if (!file || !file.body) continue;
-
-        let text = "";
+        if (!obj.key.endsWith(".gz") && !obj.key.endsWith(".json")) {
+          continue;
+        }
 
         try {
 
+          const file = await this.bucket.get(obj.key);
+          if (!file || !file.body) continue;
+
+          let text = "";
+
+          // decompress gzip
           if (obj.key.endsWith(".gz")) {
 
             const ds = new DecompressionStream("gzip");
@@ -39,19 +43,21 @@ export class R2LogService {
 
           }
 
-        } catch {
-          continue;
-        }
+          const lines = text.split("\n");
 
-        const lines = text.split("\n");
+          for (const line of lines) {
 
-        for (const line of lines) {
+            if (!line.trim()) continue;
 
-          if (!line.trim()) continue;
+            try {
+              logs.push(JSON.parse(line));
+            } catch {}
 
-          try {
-            logs.push(JSON.parse(line));
-          } catch {}
+          }
+
+        } catch (err) {
+
+          console.log("Error reading:", obj.key);
 
         }
 
@@ -59,7 +65,7 @@ export class R2LogService {
 
     } while (cursor);
 
-    console.log("Total logs:", logs.length);
+    console.log("Total logs read:", logs.length);
 
     return logs;
 
