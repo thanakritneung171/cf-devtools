@@ -193,10 +193,10 @@ export class TicketQueueDOTest {
         return Response.json({ error: "ไม่พบสินค้า" }, { status: 404 });
       }
 
-      // 2. เช็ค quantity กับ total
-      if (quantity > stock.total_quantity) {
+      // 2. เช็ค quantity กับ available (stock จริงที่เหลือหลังหัก complete แล้ว)
+      if (quantity > stock.available_quantity) {
         return Response.json(
-          { error: `ไม่สามารถจองเกินจำนวนสูงสุดได้ (total_quantity = ${stock.total_quantity})` },
+          { error: `ไม่สามารถจองได้ สินค้าคงเหลือไม่เพียงพอ (available_quantity = ${stock.available_quantity})` },
           { status: 400 }
         );
       }

@@ -52,10 +52,14 @@ number  // auto-increment counter
 ### กฎกำหนด status
 
 ```
+0. ถ้า quantity > available_quantity → reject ทันที (stock จริงไม่พอ ไม่ต้องรอ)
 1. ถ้ามี waiting อยู่ในคิวก่อนหน้า → คนใหม่ต้อง waiting เสมอ (ห้ามข้ามคิว)
 2. ถ้าไม่มี waiting + effective >= quantity → booked
 3. ถ้าไม่มี waiting + effective < quantity → waiting
 ```
+
+> **สำคัญ:** เช็คกับ `available_quantity` (stock จริงที่เหลือหลัง complete) ไม่ใช่ `total_quantity`
+> เพราะถ้า stock ถูก complete ไปแล้วจนเหลือไม่พอ → รอไปก็ไม่มีทางได้ ควร reject ตั้งแต่แรก
 
 ### ตัวอย่าง: สินค้ามี stock = 100
 
@@ -155,6 +159,7 @@ number  // auto-increment counter
 POST /booking (เข้าคิว)
 ├── ทุก request: processExpired() — เช็คและลบ entry หมดอายุ
 ├── ครั้งแรก: ดึง stock จาก D1 productsPOC → เก็บใน DO Storage
+├── เช็ค quantity > available_quantity → reject (stock จริงไม่พอ)
 ├── เช็คซ้ำ (user + product ห้ามจองซ้ำ)
 ├── เช็คมี waiting ก่อนหน้าไหม
 │   ├── มี waiting → คนใหม่ต้อง waiting (ห้ามข้ามคิว)
@@ -244,7 +249,7 @@ Base URL: `/api/ticket-queue-test`
 | Status | เงื่อนไข |
 |---|---|
 | 400 | ไม่ส่ง user_id / product_id / quantity |
-| 400 | quantity > total_quantity |
+| 400 | quantity > available_quantity (stock จริงไม่พอ) |
 | 404 | ไม่พบสินค้า |
 | 409 | user มีคิวอยู่แล้วสำหรับ product นี้ |
 
