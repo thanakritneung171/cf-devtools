@@ -123,6 +123,69 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // PUT /api/productPOCimage/:id - อัปเดตสินค้าพร้อมรูป (multipart/form-data)
+  const updateImageMatch = url.pathname.match(/^\/api\/productPOCimage\/(\d+)$/);
+  if (updateImageMatch && method === 'PUT') {
+    try {
+      const productId = parseInt(updateImageMatch[1]);
+      const existing = await service.getById(productId);
+      if (!existing) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
+      const formData = await request.formData();
+      const file = formData.get('file') as File | null;
+
+      const body: UpdateProductPOCInput = {};
+      const productName = formData.get('product_name') as string | null;
+      const description = formData.get('description') as string | null;
+      const price = formData.get('price') as string | null;
+      const totalQuantity = formData.get('total_quantity') as string | null;
+      const availableQuantity = formData.get('available_quantity') as string | null;
+
+      if (productName) body.product_name = productName;
+      if (description !== null) body.description = description;
+      if (price) body.price = parseFloat(price);
+      if (totalQuantity) body.total_quantity = parseInt(totalQuantity);
+      if (availableQuantity) body.available_quantity = parseInt(availableQuantity);
+
+      // อัปโหลดรูปผ่าน FileService (ถ้ามี)
+      if (file) {
+        if (file.size > 10 * 1024 * 1024) {
+          return Response.json({ error: 'ไฟล์ขนาดใหญ่เกิน 10MB' }, { status: 400 });
+        }
+        const fileService = new FileService(env);
+        const authPayload = authCheck as any;
+        const uploadedFile = await fileService.uploadFile(file, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
+        body.image_id = uploadedFile.id;
+      }
+
+      const product = await service.update(productId, body);
+      if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
+      // อัปเดต Vectorize embedding
+      const embedText = buildProductPOCEmbedText({
+        product_name: product.product_name,
+        description: product.description,
+        price: product.price,
+      });
+      const embedding = await generateEmbedding(env.AI, embedText);
+      await env.PRODUCTS_POC_INDEX.upsert([
+        {
+          id: String(product.id),
+          values: embedding,
+          metadata: {
+            product_name: product.product_name,
+            description: product.description || '',
+            price: String(product.price),
+          },
+        },
+      ]);
+
+      return Response.json(product);
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ไม่สามารถอัปเดตสินค้าได้' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC/search/fast?q=... — semantic search (metadata only)
   if (url.pathname === '/api/productPOC/search/fast' && method === 'GET') {
     try {
