@@ -3,14 +3,17 @@ import { ProductQueueService } from './ProductQueueService';
 
 interface Env {
   DB: D1Database;
+  R2_DOMAIN?: string;
 }
 
 export class BookingService {
   private db: D1Database;
+  private r2Domain: string;
   private productQueueService: ProductQueueService;
 
   constructor(env: Env) {
     this.db = env.DB;
+    this.r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
     this.productQueueService = new ProductQueueService(env);
   }
 
@@ -186,18 +189,40 @@ export class BookingService {
       .prepare(`
         SELECT b.*,
           u.first_name, u.last_name, u.email,
-          p.product_name, p.price,b.quantity * p.price as sumPrice, p.total_quantity, p.available_quantity
+          p.product_name, p.description as product_description, p.price, b.quantity * p.price as sumPrice,
+          p.total_quantity, p.available_quantity, p.image_id,
+          f.file_path as product_image_path
         FROM bookings b
         LEFT JOIN users u ON b.user_id = u.id
         LEFT JOIN productsPOC p ON b.product_id = p.id
+        LEFT JOIN files f ON p.image_id = f.id
         ORDER BY b.booking_date DESC
         LIMIT ? OFFSET ?
       `)
       .bind(limit, offset)
       .all();
 
+    const r2Domain = this.r2Domain;
+    const data = (results.results || []).map((row: any) => {
+      const { product_name, product_description, price, sumPrice, total_quantity, available_quantity, image_id, product_image_path, ...booking } = row;
+      return {
+        ...booking,
+        product: {
+          id: row.product_id,
+          product_name,
+          description: product_description,
+          price,
+          total_quantity,
+          available_quantity,
+          image_id: image_id || null,
+          image_url: product_image_path ? r2Domain + '/' + product_image_path : null,
+        },
+        sumPrice,
+      };
+    });
+
     return {
-      data: results.results || [],
+      data,
       total: countResult?.count || 0,
     };
   }

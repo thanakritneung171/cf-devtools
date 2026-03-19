@@ -50,7 +50,76 @@ export function getTicketQueueTestPage(): string {
 </head>
 <body>
   <h1>Ticket Queue Test Dashboard</h1>
+  <div style="max-width:1200px;margin:0 auto 16px;">
+    <div class="card">
+      <h2>Login & Auth Token</h2>
+      <div class="form-row">
+        <div><label>email</label><input type="text" id="login-email" value="thanachot.j@softdebut.com"></div>
+        <div><label>password</label><input type="password" id="login-password" value="12345678"></div>
+        <div style="flex:0;padding-bottom:10px;"><button class="btn-primary" onclick="doLogin()">Login</button></div>
+      </div>
+      <div class="form-row">
+        <div style="flex:3"><label>Bearer Token (auto-filled after login, or paste manually)</label><input type="text" id="auth-token" placeholder="token will appear here after login..."></div>
+      </div>
+      <div id="login-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
   <div class="grid">
+
+    <!-- Create Product with Image -->
+    <div class="card full">
+      <h2>Create Product (with Image)</h2>
+      <div class="form-row">
+        <div><label>product_name</label><input type="text" id="prod-name" placeholder="e.g. iPhone 16"></div>
+        <div><label>price</label><input type="number" id="prod-price" placeholder="e.g. 29900" step="0.01"></div>
+        <div><label>total_quantity</label><input type="number" id="prod-total" placeholder="e.g. 100"></div>
+      </div>
+      <div class="form-row">
+        <div><label>user_id</label><input type="number" id="prod-user-id" placeholder="e.g. 1"></div>
+        <div><label>description</label><input type="text" id="prod-desc" placeholder="(optional)"></div>
+        <div><label>image</label><input type="file" id="prod-file" accept="image/*" style="padding:5px;"></div>
+      </div>
+      <button class="btn-primary" onclick="createProduct()">Create Product</button>
+      <div id="product-create-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Product List -->
+    <div class="card full">
+      <h2>Product List</h2>
+      <div class="form-row">
+        <div><label>page</label><input type="number" id="prodlist-page" value="1" min="1"></div>
+        <div><label>limit</label><input type="number" id="prodlist-limit" value="10" min="1"></div>
+        <div><label>search</label><input type="text" id="prodlist-search" placeholder="(optional)"></div>
+        <div style="flex:0"><button class="btn-primary" onclick="loadProducts()">Load</button></div>
+      </div>
+      <div id="prodlist-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Smart Search -->
+    <div class="card full">
+      <h2>Smart Search (Semantic + Price Filter)</h2>
+      <div class="form-row">
+        <div style="flex:2"><label>search query</label><input type="text" id="search-q" placeholder="e.g. phone, laptop..."></div>
+        <div><label>minPrice</label><input type="number" id="search-min" placeholder="(optional)" step="0.01"></div>
+        <div><label>maxPrice</label><input type="number" id="search-max" placeholder="(optional)" step="0.01"></div>
+        <div><label>topK</label><input type="number" id="search-topk" value="5" min="1"></div>
+        <div style="flex:0"><button class="btn-primary" onclick="smartSearch()">Search</button></div>
+      </div>
+      <div id="search-result" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- Bookings List -->
+    <div class="card full">
+      <h2>Bookings List</h2>
+      <div class="form-row">
+        <div><label>page</label><input type="number" id="bookings-page" value="1" min="1"></div>
+        <div><label>limit</label><input type="number" id="bookings-limit" value="10" min="1"></div>
+        <div style="flex:0"><button class="btn-primary" onclick="loadBookings()">Load</button></div>
+      </div>
+      <div id="bookings-result" class="result" style="display:none;"></div>
+    </div>
+
+    <hr style="grid-column:1/-1; border:none; border-top:2px solid #4361ee; margin:8px 0;">
 
     <!-- 1. Create Booking -->
     <div class="card">
@@ -152,7 +221,21 @@ export function getTicketQueueTestPage(): string {
       return s + 's';
     }
 
+    function getAuthHeaders() {
+      const token = document.getElementById('auth-token').value;
+      return token ? { 'Authorization': 'Bearer ' + token } : {};
+    }
+
     async function apiCall(url, options) {
+      options = options || {};
+      const authHeaders = getAuthHeaders();
+      if (options.headers) {
+        Object.assign(options.headers, authHeaders);
+      } else if (options.body instanceof FormData) {
+        options.headers = authHeaders;
+      } else {
+        options.headers = { ...authHeaders, ...(options.headers || {}) };
+      }
       const res = await fetch(url, options);
       const data = await res.json();
       return { ok: res.ok, status: res.status, data };
@@ -304,6 +387,167 @@ export function getTicketQueueTestPage(): string {
         refreshAll();
       } catch (e) {
         alert('Error: ' + e.message);
+      }
+    }
+
+    // Login
+    async function doLogin() {
+      const email = document.getElementById('login-email').value;
+      const password = document.getElementById('login-password').value;
+      if (!email || !password) { alert('Please fill email and password'); return; }
+      showLoading('login-result');
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, password_hash: password })
+        });
+        const data = await res.json();
+        if (res.ok && data.token) {
+          document.getElementById('auth-token').value = data.token;
+          const u = data.user || {};
+          showHtml('login-result', '<span class="success">Login success!</span> user_id: <strong>' + u.id + '</strong> | ' + escapeHtml((u.first_name || '') + ' ' + (u.last_name || '')) + ' (' + escapeHtml(u.email || '') + ')');
+        } else {
+          showResult('login-result', JSON.stringify(data, null, 2), true);
+        }
+      } catch (e) {
+        showResult('login-result', 'Error: ' + e.message, true);
+      }
+    }
+
+    // Create Product with Image
+    async function createProduct() {
+      const name = document.getElementById('prod-name').value;
+      const price = document.getElementById('prod-price').value;
+      const total = document.getElementById('prod-total').value;
+      const userId = document.getElementById('prod-user-id').value;
+      const desc = document.getElementById('prod-desc').value;
+      const fileInput = document.getElementById('prod-file');
+      if (!name || !price || !total || !userId) { alert('Please fill product_name, price, total_quantity, user_id'); return; }
+      showLoading('product-create-result');
+      try {
+        const fd = new FormData();
+        fd.append('product_name', name);
+        fd.append('price', price);
+        fd.append('total_quantity', total);
+        fd.append('available_quantity', total);
+        fd.append('user_id', userId);
+        if (desc) fd.append('description', desc);
+        if (fileInput.files[0]) fd.append('file', fileInput.files[0]);
+        const { ok, data } = await apiCall('/api/productPOCimage', { method: 'POST', body: fd });
+        showResult('product-create-result', JSON.stringify(data, null, 2), !ok);
+      } catch (e) {
+        showResult('product-create-result', 'Error: ' + e.message, true);
+      }
+    }
+
+    // Product List
+    async function loadProducts() {
+      const page = document.getElementById('prodlist-page').value || '1';
+      const limit = document.getElementById('prodlist-limit').value || '10';
+      const search = document.getElementById('prodlist-search').value;
+      showLoading('prodlist-result');
+      try {
+        let url = '/api/productPOC?page=' + page + '&limit=' + limit;
+        if (search) url += '&search=' + encodeURIComponent(search);
+        const { ok, data } = await apiCall(url);
+        if (!ok) { showResult('prodlist-result', JSON.stringify(data, null, 2), true); return; }
+        if (!data.data || data.data.length === 0) {
+          showHtml('prodlist-result', '<p style="color:#888;">No products found.</p>');
+          return;
+        }
+        const pg = data.pagination;
+        let html = '<p><strong>Page:</strong> ' + pg.page + '/' + pg.total_pages + ' | <strong>Total:</strong> ' + pg.total + '</p>';
+        html += '<table><tr><th>ID</th><th>Image</th><th>Name</th><th>Description</th><th>Price</th><th>Stock</th><th>Created</th></tr>';
+        for (const p of data.data) {
+          html += '<tr>';
+          html += '<td>' + p.id + '</td>';
+          html += '<td>' + (p.image_url ? '<img src="' + escapeHtml(p.image_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;">' : '-') + '</td>';
+          html += '<td>' + escapeHtml(p.product_name || '') + '</td>';
+          html += '<td>' + escapeHtml(p.description || '-') + '</td>';
+          html += '<td>' + (p.price != null ? p.price.toLocaleString() : '-') + '</td>';
+          html += '<td>' + (p.available_quantity != null ? p.available_quantity + '/' + p.total_quantity : '-') + '</td>';
+          html += '<td>' + (p.created_at ? new Date(p.created_at).toLocaleString('th-TH') : '-') + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        showHtml('prodlist-result', html);
+      } catch (e) {
+        showResult('prodlist-result', 'Error: ' + e.message, true);
+      }
+    }
+
+    // Smart Search
+    async function smartSearch() {
+      const q = document.getElementById('search-q').value;
+      if (!q) { alert('Please fill search query'); return; }
+      const minPrice = document.getElementById('search-min').value;
+      const maxPrice = document.getElementById('search-max').value;
+      const topK = document.getElementById('search-topk').value || '5';
+      showLoading('search-result');
+      try {
+        let url = '/api/productPOC/smart-search?q=' + encodeURIComponent(q) + '&topK=' + topK;
+        if (minPrice) url += '&minPrice=' + minPrice;
+        if (maxPrice) url += '&maxPrice=' + maxPrice;
+        const { ok, data } = await apiCall(url);
+        if (!ok) { showResult('search-result', JSON.stringify(data, null, 2), true); return; }
+        if (!data.results || data.results.length === 0) {
+          showHtml('search-result', '<p style="color:#888;">No results found.</p>');
+          return;
+        }
+        let html = '<p><strong>Query:</strong> ' + escapeHtml(data.query) + ' | <strong>Results:</strong> ' + data.total + '</p>';
+        html += '<table><tr><th>ID</th><th>Image</th><th>Name</th><th>Description</th><th>Price</th><th>Stock</th><th>Score</th></tr>';
+        for (const p of data.results) {
+          html += '<tr>';
+          html += '<td>' + p.id + '</td>';
+          html += '<td>' + (p.image_url ? '<img src="' + escapeHtml(p.image_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;">' : '-') + '</td>';
+          html += '<td>' + escapeHtml(p.product_name || '') + '</td>';
+          html += '<td>' + escapeHtml(p.description || '-') + '</td>';
+          html += '<td>' + (p.price != null ? p.price.toLocaleString() : '-') + '</td>';
+          html += '<td>' + (p.available_quantity != null ? p.available_quantity + '/' + p.total_quantity : '-') + '</td>';
+          html += '<td>' + (p.score != null ? p.score.toFixed(4) : '-') + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        showHtml('search-result', html);
+      } catch (e) {
+        showResult('search-result', 'Error: ' + e.message, true);
+      }
+    }
+
+    // Bookings List
+    async function loadBookings() {
+      const page = document.getElementById('bookings-page').value || '1';
+      const limit = document.getElementById('bookings-limit').value || '10';
+      showLoading('bookings-result');
+      try {
+        const { ok, data } = await apiCall('/api/bookings?page=' + page + '&limit=' + limit);
+        if (!ok) { showResult('bookings-result', JSON.stringify(data, null, 2), true); return; }
+        if (!data.data || data.data.length === 0) {
+          showHtml('bookings-result', '<p style="color:#888;">No bookings found.</p>');
+          return;
+        }
+        const pg = data.pagination;
+        let html = '<p><strong>Page:</strong> ' + pg.page + '/' + pg.total_pages + ' | <strong>Total:</strong> ' + pg.total + '</p>';
+        html += '<table><tr><th>ID</th><th>User</th><th>Product</th><th>Image</th><th>Qty</th><th>Price</th><th>Sum</th><th>Status</th><th>Date</th></tr>';
+        for (const b of data.data) {
+          const prod = b.product || {};
+          html += '<tr>';
+          html += '<td>' + b.id + '</td>';
+          html += '<td>' + escapeHtml((b.first_name || '') + ' ' + (b.last_name || '')) + '</td>';
+          html += '<td>' + escapeHtml(prod.product_name || '-') + '</td>';
+          html += '<td>' + (prod.image_url ? '<img src="' + escapeHtml(prod.image_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;">' : '-') + '</td>';
+          html += '<td>' + (b.quantity || '-') + '</td>';
+          html += '<td>' + (prod.price != null ? prod.price.toLocaleString() : '-') + '</td>';
+          html += '<td>' + (b.sumPrice != null ? b.sumPrice.toLocaleString() : '-') + '</td>';
+          html += '<td>' + badgeFor(b.status || '') + '</td>';
+          html += '<td>' + (b.booking_date ? new Date(b.booking_date).toLocaleString('th-TH') : '-') + '</td>';
+          html += '</tr>';
+        }
+        html += '</table>';
+        showHtml('bookings-result', html);
+      } catch (e) {
+        showResult('bookings-result', 'Error: ' + e.message, true);
       }
     }
 
