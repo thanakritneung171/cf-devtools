@@ -16,6 +16,9 @@ import { getTicketQueueTestPage } from "./pages/ticketQueueTestPage";
 import { LogService } from "./services/LogService";
 export { TicketQueueDO } from "./durableObjects/TicketQueueDO";
 export { TicketQueueDOTest } from "./durableObjects/TicketQueueDOTest";
+import { dashboardHandler } from "./routes/dashboard";
+import { dashboardTopIP } from "./routes/dashboardTopIP";
+import { dashboardErrors } from "./routes/dashboardErrors";
 
 declare global {
   interface Env {
@@ -28,6 +31,46 @@ export default {
 	async fetch(request, env, ctx): Promise<Response> {
 	const url = new URL(request.url);
     const method = request.method;
+	
+	
+	  // CORS
+	  if (request.method === "OPTIONS") {
+	   return new Response(null, {
+		headers:{
+		 "Access-Control-Allow-Origin":"*",
+		 "Access-Control-Allow-Methods":"GET,POST,OPTIONS",
+		 "Access-Control-Allow-Headers":"*"
+		}
+	   });
+	  }
+	
+	  const cors=(res:Response)=>{
+	   const headers=new Headers(res.headers);
+	   headers.set("Access-Control-Allow-Origin","*");
+	   headers.set("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+	   headers.set("Access-Control-Allow-Headers","*");
+	
+	   return new Response(res.body,{
+		status:res.status,
+		headers
+	   });
+	  };
+	
+	  if(url.pathname==="/api/dashboard"){
+	   return cors(await dashboardHandler(request,env));
+	  }
+	
+	  if(url.pathname==="/api/dashboard/top-ip"){
+	   return cors(await dashboardTopIP(request,env));
+	  }
+	
+	  if(url.pathname==="/api/dashboard/errors"){
+	   return cors(await dashboardErrors(request,env));
+	   
+	  }
+	
+	  //return new Response("Not Found",{status:404});
+	
 
 // GET /
     if (url.pathname === "/" && method === "GET") {
