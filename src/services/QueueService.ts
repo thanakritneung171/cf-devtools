@@ -2,6 +2,7 @@ import { BookingQueue } from '../types/productPOC';
 
 interface Env {
   DB: D1Database;
+  PRODUCT_QUEUE: DurableObjectNamespace;
 }
 
 export class QueueService {

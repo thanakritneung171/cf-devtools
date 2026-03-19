@@ -13,6 +13,32 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+			"name": "PRODUCT_QUEUE",
+			"class_name": "TicketQueueDO"
+			},
+			{
+			"name": "TICKET_QUEUE_TEST",
+			"class_name": "TicketQueueDOTest"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_classes": ["ProductQueueDO"]
+		},
+		{
+			"tag": "v2",
+			"renamed_classes": [{ "from": "ProductQueueDO", "to": "TicketQueueDO" }]
+		},
+		{
+			"tag": "v3",
+			"new_classes": ["TicketQueueDOTest"]
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "MY_BUCKET",

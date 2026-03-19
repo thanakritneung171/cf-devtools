@@ -9,11 +9,18 @@ import { handleProductPOCRoutes } from "./routes/productPOC";
 import { handleBookingRoutes } from "./routes/bookings";
 import { handleLogRoutes } from "./routes/logs";
 import { handleFileRoutes } from "./routes/files";
+import { handleProductQueueRoutes } from "./routes/productQueue";
+import { handleTicketQueueRoutes } from "./routes/ticketQueue";
+import { handleTicketQueueTestRoutes } from "./routes/ticketQueueTest";
+import { getTicketQueueTestPage } from "./pages/ticketQueueTestPage";
 import { LogService } from "./services/LogService";
+export { TicketQueueDO } from "./durableObjects/TicketQueueDO";
+export { TicketQueueDOTest } from "./durableObjects/TicketQueueDOTest";
 
 declare global {
   interface Env {
-    IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
+     IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
+	  
   }
 }
 
@@ -25,6 +32,13 @@ export default {
 // GET /
     if (url.pathname === "/" && method === "GET") {
       return Response.json({ message: "Hello Worker API 🚀" });
+    }
+
+    // GET /ticket-queue-test — HTML test page
+    if (url.pathname === "/ticket-queue-test" && method === "GET") {
+      return new Response(getTicketQueueTestPage(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     // GET /api/hello
@@ -109,6 +123,76 @@ export default {
 	const filesResponse = await handleFileRoutes(request, env, url, method);
 	if (filesResponse) {
 		return filesResponse;
+	}
+
+	
+	 // join queue
+    if (url.pathname === "/queue/join" && request.method === "POST") {
+
+		const body = await request.json()
+
+		const productId = body.productId
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		return stub.fetch("https://queue/join", {
+		method: "POST",
+		body: JSON.stringify(body)
+		})
+
+    }
+
+	// leave queue
+    if (url.pathname === "/queue/leave" && request.method === "POST") {
+
+		const body = await request.json()
+
+		const productId = body.productId
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		return stub.fetch("https://queue/leave", {
+		method: "POST",
+		body: JSON.stringify(body)
+		})
+
+    }
+
+	if (url.pathname.startsWith("/queue")) {
+
+		const productId = url.searchParams.get("productId")
+
+		if (!productId) {
+			return new Response("Missing productId", { status: 400 })
+		}
+
+		const id = env.PRODUCT_QUEUE.idFromName(productId.toString())
+		const stub = env.PRODUCT_QUEUE.get(id)
+
+		console.log("เข้า index route แล้ว:", url.pathname, "productId:", productId)
+
+		return stub.fetch(request)
+	}
+	// Ticket Queue API Routes (Durable Object)
+	const ticketQueueResponse = await handleTicketQueueRoutes(request, env, url, method);
+	if (ticketQueueResponse) {
+		return ticketQueueResponse;
+	}
+
+	// Ticket Queue Test API Routes (DO Storage version)
+	const ticketQueueTestResponse = await handleTicketQueueTestRoutes(request, env, url, method);
+	if (ticketQueueTestResponse) {
+		return ticketQueueTestResponse;
+	}
+
+	// Product Queue API Routes
+	const productQueueResponse = await handleProductQueueRoutes(request, env, url, method);
+	if (productQueueResponse) {
+		return productQueueResponse;
 	}
 
 	// Request Logging - บันทึกทุก request ที่ไม่ match route ใดๆ
