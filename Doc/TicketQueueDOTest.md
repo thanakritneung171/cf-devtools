@@ -724,8 +724,102 @@ PUT /booking/3/cancel?product_id=5
 |---|---|
 | `src/durableObjects/TicketQueueDOTest.ts` | Durable Object class — queue + stock + expiration logic |
 | `src/routes/ticketQueueTest.ts` | Route handler — proxy requests ไป DO instance ตาม product_id |
+| `src/pages/ticketQueueTestPage.ts` | HTML Test Page — หน้าเว็บสำหรับทดสอบ API ผ่าน browser |
 | `wrangler.jsonc` | Binding: `TICKET_QUEUE_TEST` → class `TicketQueueDOTest` |
-| `src/index.ts` | Export class + import route handler |
+| `src/index.ts` | Export class + import route handler + serve HTML page |
+
+---
+
+## HTML Test Page (หน้าเว็บทดสอบ)
+
+เปิด browser ไปที่ `http://localhost:8787/ticket-queue-test` จะได้หน้าเว็บสำหรับทดสอบ API ทั้งหมดโดยไม่ต้องใช้ Postman/cURL
+
+### วิธีใช้งาน
+
+```
+npx wrangler dev
+→ เปิด http://localhost:8787/ticket-queue-test
+```
+
+### ส่วนประกอบของหน้าเว็บ
+
+| ส่วน | ทำอะไร | API ที่เรียก |
+|---|---|---|
+| **Create Booking** | กรอก user_id, product_id, quantity แล้วกด Create | `POST /api/ticket-queue-test/booking` |
+| **Stock Info** | กรอก product_id แล้วกด Load ดู stock + queue detail | `GET /api/ticket-queue-test/stock?product_id=X` |
+| **Queue All** | กด Load ดู queue ทุก product | `GET /api/ticket-queue-test/queue-all` |
+| **Queue by User** | กรอก user_id แล้วกด Load ดู queue ของ user ข้ามทุก product | `GET /api/ticket-queue-test/queue/user?user_id=Y` |
+
+### ปุ่ม Complete / Cancel
+
+- ทุก queue entry ที่สถานะเป็น `booked` หรือ `waiting` จะมีปุ่ม **Complete** และ **Cancel**
+- กด **Complete** → `PUT /api/ticket-queue-test/booking/:queueId/complete?product_id=X`
+- กด **Cancel** → `PUT /api/ticket-queue-test/booking/:queueId/cancel?product_id=X`
+- หลังกดจะ auto-refresh ข้อมูลที่แสดงอยู่ทั้งหมด
+
+### ข้อมูลที่แสดงในตาราง Queue
+
+| Column | มาจาก field | อธิบาย |
+|---|---|---|
+| Queue ID | `entry.id` | ID ของ queue entry (ใช้สำหรับ complete/cancel) |
+| User | `entry.user.first_name + last_name` | ชื่อ user (JOIN จาก D1) ถ้าไม่มีแสดง user_id |
+| Qty | `entry.quantity` | จำนวนที่จอง |
+| Status | `entry.status` | สถานะ: `booked` (สีม่วง), `waiting` (สีเหลือง) |
+| Expires At | `entry.expires_at` | เวลาหมดอายุ (เฉพาะ booked, waiting = `-`) |
+| Time Remaining | `entry.time_remaining_seconds` | เวลาที่เหลือ เช่น `4m 30s`, ถ้าหมดแสดง `Expired` สีแดง |
+| Actions | - | ปุ่ม Complete / Cancel (เฉพาะ booked, waiting) |
+
+### สถานะ Badge สี
+
+| Status | สี | CSS Class |
+|---|---|---|
+| `booked` | ม่วง | `.badge-booked` |
+| `waiting` | เหลือง | `.badge-waiting` |
+| `active` | น้ำเงิน | `.badge-active` |
+| `completed` | เขียว | `.badge-completed` |
+| `cancelled` | แดง | `.badge-cancelled` |
+| `expired` | เทา | `.badge-expired` |
+
+### ตัวอย่างการทดสอบ
+
+```
+1. เปิดหน้าเว็บ http://localhost:8787/ticket-queue-test
+
+2. สร้าง Booking 4 คน:
+   - user_id=1, product_id=17, quantity=40 → กด Create → ได้ booked
+   - user_id=2, product_id=17, quantity=30 → กด Create → ได้ booked
+   - user_id=3, product_id=17, quantity=31 → กด Create → ได้ waiting (stock ไม่พอ)
+   - user_id=4, product_id=17, quantity=9  → กด Create → ได้ waiting (มี waiting ก่อนหน้า)
+
+3. ดู Stock Info:
+   - กรอก product_id=17 กด Load
+   - เห็น stock, effective_available, queue detail + เวลาที่เหลือ
+
+4. ดู Queue All:
+   - กด Load Queue All → เห็นทุก product ที่มี queue
+
+5. ทดสอบ Complete:
+   - ที่ queue entry คน 1 กดปุ่ม Complete
+   - stock จะถูกหัก, booking สร้างใน D1
+   - ข้อมูลจะ auto-refresh
+
+6. ทดสอบ Cancel:
+   - ที่ queue entry คน 2 กดปุ่ม Cancel
+   - คน 3,4 อาจถูก promote เป็น booked (ถ้า stock พอ)
+   - ข้อมูลจะ auto-refresh
+
+7. ดู Queue by User:
+   - กรอก user_id=3 กด Load → เห็น queue ของ user ข้ามทุก product
+```
+
+### Technical Notes
+
+- HTML page เป็น inline string ใน TypeScript (ไม่ใช้ static assets)
+- Serve จาก route `GET /ticket-queue-test` ด้วย `Content-Type: text/html; charset=utf-8`
+- ใช้ vanilla HTML + CSS + JavaScript (ไม่มี framework)
+- Responsive layout (2 columns → 1 column บนมือถือ)
+- `showResult()` ใช้แสดง plain text/JSON (escape HTML)
+- `showHtml()` ใช้แสดง HTML ที่สร้างจาก JS (render เป็น table, badge, buttons)
 
 ---
 

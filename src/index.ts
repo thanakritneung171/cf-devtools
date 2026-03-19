@@ -12,6 +12,7 @@ import { handleFileRoutes } from "./routes/files";
 import { handleProductQueueRoutes } from "./routes/productQueue";
 import { handleTicketQueueRoutes } from "./routes/ticketQueue";
 import { handleTicketQueueTestRoutes } from "./routes/ticketQueueTest";
+import { getTicketQueueTestPage } from "./pages/ticketQueueTestPage";
 import { LogService } from "./services/LogService";
 export { TicketQueueDO } from "./durableObjects/TicketQueueDO";
 export { TicketQueueDOTest } from "./durableObjects/TicketQueueDOTest";
@@ -31,6 +32,13 @@ export default {
 // GET /
     if (url.pathname === "/" && method === "GET") {
       return Response.json({ message: "Hello Worker API 🚀" });
+    }
+
+    // GET /ticket-queue-test — HTML test page
+    if (url.pathname === "/ticket-queue-test" && method === "GET") {
+      return new Response(getTicketQueueTestPage(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     // GET /api/hello
