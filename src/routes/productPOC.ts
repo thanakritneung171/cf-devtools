@@ -13,8 +13,8 @@ interface Env {
   R2_DOMAIN?: string;
 }
 
-function buildProductPOCEmbedText(p: { product_name: string; description?: string; price: number }): string {
-  return `${p.product_name} ${p.description || ''} price:${p.price}`;
+function buildProductPOCEmbedText(p: { product_name: string; description?: string;  }): string {
+  return `${p.product_name} ${p.description || ''}`.trim();
 }
 
 async function generateEmbedding(ai: Ai, text: string): Promise<number[]> {
@@ -287,8 +287,7 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       // อัปเดต Vectorize embedding
       const embedText = buildProductPOCEmbedText({
         product_name: product.product_name,
-        description: product.description,
-        price: product.price,
+        description: product.description
       });
       const embedding = await generateEmbedding(env.AI, embedText);
       await env.PRODUCTS_POC_INDEX.upsert([
@@ -403,8 +402,7 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       // อัปเดต Vectorize embedding
       const embedText = buildProductPOCEmbedText({
         product_name: product.product_name,
-        description: product.description,
-        price: product.price,
+        description: product.description
       });
       const embedding = await generateEmbedding(env.AI, embedText);
       await env.PRODUCTS_POC_INDEX.upsert([
