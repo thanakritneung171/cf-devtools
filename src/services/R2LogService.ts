@@ -4,18 +4,20 @@ export class R2LogService {
 
   async readLogs(): Promise<any[]> {
 
-    const logs:any[] = [];
+    const logs: any[] = [];
     let cursor: string | undefined;
+    let fileCount = 0;
 
     do {
 
       const result = await this.bucket.list({
         prefix: "logpush/",
         limit: 1000,
-        cursor
+        ...(cursor ? { cursor } : {}),
       });
 
-      cursor = result.truncated ? result.cursor : undefined;
+      // R2 list ใช้ result.truncated + result.cursor สำหรับ pagination
+      cursor = result.truncated ? (result as any).cursor : undefined;
 
       for (const obj of result.objects) {
 
@@ -30,43 +32,38 @@ export class R2LogService {
 
           let text = "";
 
-          // decompress gzip
           if (obj.key.endsWith(".gz")) {
-
             const ds = new DecompressionStream("gzip");
             const decompressed = file.body.pipeThrough(ds);
             text = await new Response(decompressed).text();
-
           } else {
-
             text = await new Response(file.body).text();
-
           }
 
-          const lines = text.split("\n");
-
-          for (const line of lines) {
-
+          for (const line of text.split("\n")) {
             if (!line.trim()) continue;
-
             try {
               logs.push(JSON.parse(line));
             } catch {}
+          }
 
+          fileCount++;
+
+          // Debug: ดู structure ของ log entry จริงๆ จาก file แรก
+          if (fileCount === 1 && logs.length > 0) {
+            console.log("[R2] Sample keys:", Object.keys(logs[0]));
+            console.log("[R2] Sample entry:", JSON.stringify(logs[0]).slice(0, 600));
           }
 
         } catch (err) {
-
-          console.log("Error reading:", obj.key);
-
+          console.error("[R2] Error reading:", obj.key, err);
         }
 
       }
 
     } while (cursor);
 
-    console.log("Total logs read:", logs.length);
-
+    console.log("[R2] Files:", fileCount, "| Lines:", logs.length);
     return logs;
 
   }
