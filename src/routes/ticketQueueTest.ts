@@ -120,14 +120,26 @@ export async function handleTicketQueueTestRoutes(
             const res = await stub.fetch(`https://ticket-queue-test/queue/all`);
             const data = await res.json() as any;
 
-            const userEntries = (data.queue || []).filter((e: any) => e.user_id === uid);
+            const fullQueue: any[] = data.queue || [];
+            const userEntries = fullQueue.filter((e: any) => e.user_id === uid);
             if (userEntries.length === 0) return null;
+
+            const enrichedEntries = userEntries.map((entry: any) => {
+              const idx = fullQueue.findIndex((e: any) => e.id === entry.id);
+              const before = idx >= 0 ? fullQueue.slice(0, idx) : [];
+              return {
+                ...entry,
+                total_in_queue: fullQueue.length,
+                waiting_ahead: before.filter((e: any) => e.status === 'waiting').length,
+                booked_ahead: before.filter((e: any) => e.status === 'booked').length,
+              };
+            });
 
             return {
               product_id: pid,
               stock: data.stock,
               effective_available: data.effective_available,
-              queue_entries: userEntries,
+              queue_entries: enrichedEntries,
             };
           } catch {
             return null;
@@ -172,7 +184,16 @@ export async function handleTicketQueueTestRoutes(
             const data = await res.json() as any;
             // เอาเฉพาะ product ที่มีคิว
             if (data.total > 0) {
-              return { product_id: pid, ...data };
+              const enrichedQueue = (data.queue || []).map((entry: any, idx: number) => {
+                const before = (data.queue || []).slice(0, idx);
+                return {
+                  ...entry,
+                  total_in_queue: data.total,
+                  waiting_ahead: before.filter((e: any) => e.status === 'waiting').length,
+                  booked_ahead: before.filter((e: any) => e.status === 'booked').length,
+                };
+              });
+              return { product_id: pid, ...data, queue: enrichedQueue };
             }
             return null;
           } catch {

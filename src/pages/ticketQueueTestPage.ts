@@ -338,7 +338,12 @@ export function getTicketQueueTestPage(): string {
 
     // Render queue table with Complete/Cancel buttons
     function renderQueueTable(queue, productId) {
-      let html = '<table><tr><th>Queue ID</th><th>User</th><th>Qty</th><th>Status</th><th>Expires At</th><th>Time Remaining</th><th>Actions</th></tr>';
+      const hasQueueInfo = queue.some(e => e.total_in_queue != null);
+      let html = '<table><tr><th>Queue ID</th><th>User</th><th>Qty</th><th>Status</th>';
+      if (hasQueueInfo) {
+        html += '<th>Total in Queue</th><th>Waiting Ahead</th><th>Booked Ahead</th>';
+      }
+      html += '<th>Expires At</th><th>Time Remaining</th><th>Actions</th></tr>';
       for (const entry of queue) {
         const qid = entry.id;
         const st = (entry.status || '').toLowerCase();
@@ -351,6 +356,11 @@ export function getTicketQueueTestPage(): string {
         html += '<td>' + userName + '</td>';
         html += '<td>' + (entry.quantity || '-') + '</td>';
         html += '<td>' + badgeFor(entry.status) + '</td>';
+        if (hasQueueInfo) {
+          html += '<td style="text-align:center;">' + (entry.total_in_queue != null ? entry.total_in_queue : '-') + '</td>';
+          html += '<td style="text-align:center;">' + (entry.waiting_ahead != null ? '<span style="color:#f4a261;font-weight:600;">' + entry.waiting_ahead + '</span>' : '-') + '</td>';
+          html += '<td style="text-align:center;">' + (entry.booked_ahead != null ? '<span style="color:#7209b7;font-weight:600;">' + entry.booked_ahead + '</span>' : '-') + '</td>';
+        }
         html += '<td>' + expiresAt + '</td>';
         html += '<td>' + timeRemaining + '</td>';
         html += '<td>';
@@ -406,7 +416,21 @@ export function getTicketQueueTestPage(): string {
         if (res.ok && data.token) {
           document.getElementById('auth-token').value = data.token;
           const u = data.user || {};
-          showHtml('login-result', '<span class="success">Login success!</span> user_id: <strong>' + u.id + '</strong> | ' + escapeHtml((u.first_name || '') + ' ' + (u.last_name || '')) + ' (' + escapeHtml(u.email || '') + ')');
+          // Auto-fill user_id in all relevant fields
+          if (u.id) {
+            document.getElementById('booking-user-id').value = u.id;
+            document.getElementById('queue-user-id').value = u.id;
+            document.getElementById('prod-user-id').value = u.id;
+          }
+          showHtml('login-result',
+            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+            '<span class="success" style="font-size:15px;">&#10003; Login สำเร็จ</span>' +
+            '<span>user_id: <strong>' + u.id + '</strong></span>' +
+            '<span>' + escapeHtml((u.first_name || '') + ' ' + (u.last_name || '')) + '</span>' +
+            '<span style="color:#888;">' + escapeHtml(u.email || '') + '</span>' +
+            (u.role ? '<span class="badge badge-active">' + escapeHtml(u.role) + '</span>' : '') +
+            '</div>'
+          );
         } else {
           showResult('login-result', JSON.stringify(data, null, 2), true);
         }
