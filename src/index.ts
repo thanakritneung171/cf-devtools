@@ -19,6 +19,7 @@ export { TicketQueueDOTest } from "./durableObjects/TicketQueueDOTest";
 import { dashboardHandler } from "./routes/dashboard";
 import { dashboardTopIP } from "./routes/dashboardTopIP";
 import { dashboardErrors } from "./routes/dashboardErrors";
+import { handleDashboardBookingsRoutes } from "./routes/dashboardBookings";
 
 declare global {
   interface Env {
@@ -148,6 +149,12 @@ export default {
 	const productPOCResponse = await handleProductPOCRoutes(request, env, url, method);
 	if (productPOCResponse) {
 		return productPOCResponse;
+	}
+
+	// Bookings Dashboard API Routes
+	const dashboardBookingsResponse = await handleDashboardBookingsRoutes(request, env, url, method);
+	if (dashboardBookingsResponse) {
+		return dashboardBookingsResponse;
 	}
 
 	// Bookings API Routes

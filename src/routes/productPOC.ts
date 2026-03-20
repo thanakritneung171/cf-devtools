@@ -364,6 +364,65 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // POST /api/productPOC/filter — filter ตรงจาก D1
+  // Body: { product_name?, min_price?, max_price?, page?, limit? }
+  if (url.pathname === '/api/productPOC/filter' && method === 'POST') {
+    try {
+      const body = await request.json<{ product_name?: string; min_price?: number; max_price?: number; page?: number; limit?: number }>();
+      const productName = body.product_name || undefined;
+      const minPrice = body.min_price !== undefined ? body.min_price : undefined;
+      const maxPrice = body.max_price !== undefined ? body.max_price : undefined;
+      const page = body.page || 1;
+      const limit = body.limit || 10;
+
+      let query = `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE 1=1`;
+      let countQuery = 'SELECT COUNT(*) as count FROM productsPOC p WHERE 1=1';
+      const params: any[] = [];
+      const countParams: any[] = [];
+
+      if (productName) {
+        query += ' AND p.product_name LIKE ?';
+        countQuery += ' AND p.product_name LIKE ?';
+        params.push(`%${productName}%`);
+        countParams.push(`%${productName}%`);
+      }
+      if (minPrice !== undefined) {
+        query += ' AND p.price >= ?';
+        countQuery += ' AND p.price >= ?';
+        params.push(minPrice);
+        countParams.push(minPrice);
+      }
+      if (maxPrice !== undefined) {
+        query += ' AND p.price <= ?';
+        countQuery += ' AND p.price <= ?';
+        params.push(maxPrice);
+        countParams.push(maxPrice);
+      }
+
+      const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ count: number }>();
+      const total = countResult?.count || 0;
+
+      const offset = (page - 1) * limit;
+      query += ' ORDER BY p.created_at DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      const results = await env.DB.prepare(query).bind(...params).all<any>();
+      const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
+      const data = (results.results || []).map((p: any) => {
+        const { file_path, ...product } = p;
+        if (file_path) product.image_url = `${r2Domain}/${file_path}`;
+        return product;
+      });
+
+      return Response.json({
+        data,
+        pagination: { page, limit, total, total_pages: Math.ceil(total / limit) },
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'กรองข้อมูลไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC - ดูสินค้าทั้งหมด
   if (url.pathname === '/api/productPOC' && method === 'GET') {
     try {

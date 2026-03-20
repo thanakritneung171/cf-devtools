@@ -25,8 +25,8 @@ export class UserService {
   async createUser(data: CreateUserInput): Promise<User> {
     const result = await this.db
       .prepare(
-        `INSERT INTO users (email, password_hash, first_name, last_name, address, phone, date_of_birth, status, avatar_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (email, password_hash, first_name, last_name, address, phone, date_of_birth, status, role, avatar_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         data.email,
@@ -37,6 +37,7 @@ export class UserService {
         data.phone || null,
         data.date_of_birth || null,
         data.status || 'active',
+        data.role || 'User',
         data.avatar_url || null
       )
       .run();
@@ -52,8 +53,8 @@ export class UserService {
     // Create user first
     const result = await this.db
       .prepare(
-        `INSERT INTO users (email, password_hash, first_name, last_name, address, phone, date_of_birth, status, avatar_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (email, password_hash, first_name, last_name, address, phone, date_of_birth, status, role, avatar_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         data.email,
@@ -64,6 +65,7 @@ export class UserService {
         data.phone || null,
         data.date_of_birth || null,
         data.status || 'active',
+        data.role || 'User',
         null // avatar_url will be updated if file provided
       )
       .run();
@@ -250,6 +252,10 @@ export class UserService {
     if (data.last_login_at !== undefined) {
       updates.push('last_login_at = ?');
       values.push(data.last_login_at);
+    }
+    if (data.role !== undefined) {
+      updates.push('role = ?');
+      values.push(data.role);
     }
 
     if (updates.length === 0) return user;

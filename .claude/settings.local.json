@@ -8,7 +8,8 @@
       "Bash(npx wrangler r2 object head:*)",
       "Bash(npx wrangler:*)",
       "Bash(curl:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(xargs cat:*)"
     ]
   }
 }

@@ -8,6 +8,7 @@ export interface User {
   phone?: string;
   date_of_birth?: string;
   status: string;
+  role: string;
   avatar_url?: string;
   last_login_at?: string;
   created_at: string;
@@ -24,6 +25,7 @@ export interface CreateUserInput {
   phone?: string;
   date_of_birth?: string;
   status?: string;
+  role?: string;
   avatar_url?: string;
 }
 
@@ -36,6 +38,7 @@ export interface CreateUserWithAvatarInput {
   phone?: string;
   date_of_birth?: string;
   status?: string;
+  role?: string;
   file?: File;
 }
 
@@ -46,6 +49,7 @@ export interface UpdateUserInput {
   phone?: string;
   date_of_birth?: string;
   status?: string;
+  role?: string;
   avatar_url?: string;
   last_login_at?: string;
 }

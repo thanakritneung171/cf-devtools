@@ -1,6 +1,7 @@
 import { UserService } from '../services/UserService';
 import { CreateUserInput, CreateUserWithAvatarInput, UpdateUserInput } from '../types';
 import { generateJWT } from '../utils/jwt';
+import { hashPassword } from '../utils/password';
 import { verifyRequestAuth } from '../utils/auth';
 import { ImageResizeMessage } from '../queues/imageResizeConsumer';
 
@@ -11,6 +12,7 @@ interface Env {
   MY_BUCKET: R2Bucket;
   R2_DOMAIN: string;
   JWT_SECRET?: string;
+  PASSWORD_SECRET?: string;
   IMAGE_RESIZE_QUEUE: Queue<ImageResizeMessage>;
 }
 
@@ -37,25 +39,33 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         const formData = await request.formData();
         const file = formData.get('file') as File | null;
 
+        const password_hash = formData.get('password_hash') as string;
+
+        // Validation
+        if (!formData.get('email') || !password_hash || !formData.get('first_name') || !formData.get('last_name')) {
+          return Response.json(
+            { error: 'กรุณากรอกข้อมูลที่จำเป็น: email, password_hash, first_name, last_name' },
+            { status: 400 }
+          );
+        }
+
+        const pwSecret = env.PASSWORD_SECRET;
+        if (!pwSecret) {
+          return Response.json({ error: 'PASSWORD_SECRET ไม่ได้ถูกตั้งค่า' }, { status: 500 });
+        }
+
         const data: CreateUserWithAvatarInput = {
           email: formData.get('email') as string,
-          password_hash: formData.get('password_hash') as string,
+          password_hash: await hashPassword(password_hash, pwSecret),
           first_name: formData.get('first_name') as string,
           last_name: formData.get('last_name') as string,
           address: (formData.get('address') as string) || undefined,
           phone: (formData.get('phone') as string) || undefined,
           date_of_birth: (formData.get('date_of_birth') as string) || undefined,
           status: (formData.get('status') as string) || 'active',
+          role: (formData.get('role') as string) || 'User',
           file: file || undefined,
         };
-
-        // Validation
-        if (!data.email || !data.password_hash || !data.first_name || !data.last_name) {
-          return Response.json(
-            { error: 'กรุณากรอกข้อมูลที่จำเป็น: email, password_hash, first_name, last_name' },
-            { status: 400 }
-          );
-        }
 
         // Validate file if provided
         if (file && !file.type.startsWith('image/')) {
@@ -87,17 +97,25 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         }
       } else {
         // JSON request
-        const body = await request.json<CreateUserInput>();
+        const body = await request.json<Omit<CreateUserInput, 'password_hash'> & { password_hash: string }>();
 
         // Validation
         if (!body.email || !body.password_hash || !body.first_name || !body.last_name) {
           return Response.json(
-            { error: 'กรุณากรอกข้อมูลที่จำเป็น: email, password_hash, first_name, last_name' },
+            { error: 'กรุณากรอกข้อมูลที่จำเป็น: email, password, first_name, last_name' },
             { status: 400 }
           );
         }
 
-        user = await userService.createUser(body);
+        const pwSecret = env.PASSWORD_SECRET;
+        if (!pwSecret) {
+          return Response.json({ error: 'PASSWORD_SECRET ไม่ได้ถูกตั้งค่า' }, { status: 500 });
+        }
+
+        user = await userService.createUser({
+          ...body,
+          password_hash: await hashPassword(body.password_hash, pwSecret),
+        });
       }
 
       return Response.json(user, { status: 201 });
@@ -345,15 +363,53 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
     }
   }
 
-  // Auth - Login (email + password_hash) - POST /api/auth/login
+  // Update User Role - PATCH /api/users/:id/role
+  if (url.pathname.match(/^\/api\/users\/\d+\/role$/) && method === 'PATCH') {
+    try {
+      const authCheck = await verifyRequestAuth(request, env);
+      if (authCheck instanceof Response) return authCheck;
+
+      const id = parseInt(url.pathname.split('/')[3]);
+      if (isNaN(id)) {
+        return Response.json({ error: 'รหัสผู้ใช้ไม่ถูกต้อง' }, { status: 400 });
+      }
+
+      const body = await request.json<{ role: string }>();
+      if (!body.role) {
+        return Response.json({ error: 'กรุณาระบุ role (Admin หรือ User)' }, { status: 400 });
+      }
+      if (!['Admin', 'User'].includes(body.role)) {
+        return Response.json({ error: 'role ต้องเป็น Admin หรือ User เท่านั้น' }, { status: 400 });
+      }
+
+      const user = await userService.updateUser(id, { role: body.role });
+      if (!user) {
+        return Response.json({ error: 'ไม่พบผู้ใช้' }, { status: 404 });
+      }
+
+      // Invalidate USERS_Profile KV
+      await env.USERS_Profile.delete(getProfileKey(id));
+
+      return Response.json(user);
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ไม่สามารถแก้ไข role ได้' }, { status: 500 });
+    }
+  }
+
+  // Auth - Login (email + password) - POST /api/auth/login
   if (url.pathname === '/api/auth/login' && method === 'POST') {
     try {
       const body = await request.json() as { email?: string; password_hash?: string };
       const email = body.email;
-      const password_hash = body.password_hash;
+      const password = body.password_hash;
 
-      if (!email || !password_hash) {
-        return Response.json({ error: 'กรุณาส่ง email และ password_hash' }, { status: 400 });
+      if (!email || !password) {
+        return Response.json({ error: 'กรุณาส่ง email และ password' }, { status: 400 });
+      }
+
+      const pwSecret = env.PASSWORD_SECRET;
+      if (!pwSecret) {
+        return Response.json({ error: 'PASSWORD_SECRET ไม่ได้ถูกตั้งค่า' }, { status: 500 });
       }
 
       const user = await userService.getUserByEmail(email);
@@ -361,8 +417,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         return Response.json({ error: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
       }
 
-      // Compare stored hash (note: hashing should be done client-side or use proper hashing libs)
-      if (user.password_hash !== password_hash) {
+      // Hash password ที่รับมาแล้วเทียบกับที่เก็บใน DB
+      const hashedInput = await hashPassword(password, pwSecret);
+      if (user.password_hash !== hashedInput) {
         return Response.json({ error: 'ไม่พบผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
       }
 

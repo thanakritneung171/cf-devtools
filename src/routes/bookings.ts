@@ -125,6 +125,80 @@ export async function handleBookingRoutes(request: Request, env: Env, url: URL, 
     }
   }
 
+  // POST /api/bookings/filter — filter ตรงจาก D1
+  // Body: { status?, user_id?, product_id?, page?, limit? }
+  if (url.pathname === '/api/bookings/filter' && method === 'POST') {
+    try {
+      const body = await request.json<{ status?: string; user_id?: number; product_id?: number; page?: number; limit?: number }>();
+      const status = body.status || undefined;
+      const userId = body.user_id || undefined;
+      const productId = body.product_id || undefined;
+      const page = body.page || 1;
+      const limit = body.limit || 10;
+
+      let query = `
+        SELECT
+          b.id, b.user_id, b.product_id, b.quantity, b.status,
+          b.booking_date, b.estimated_complete_at, b.countdown_seconds,
+          u.first_name, u.last_name, u.email,
+          p.product_name, p.description AS product_description,
+          p.price, p.total_quantity, p.available_quantity,
+          f.file_path AS product_image_path
+        FROM bookings b
+        LEFT JOIN users u ON b.user_id = u.id
+        LEFT JOIN productsPOC p ON b.product_id = p.id
+        LEFT JOIN files f ON p.image_id = f.id
+        WHERE 1=1`;
+      let countQuery = 'SELECT COUNT(*) as count FROM bookings b WHERE 1=1';
+      const params: any[] = [];
+      const countParams: any[] = [];
+
+      if (status) {
+        query += ' AND b.status = ?';
+        countQuery += ' AND b.status = ?';
+        params.push(status);
+        countParams.push(status);
+      }
+      if (userId) {
+        query += ' AND b.user_id = ?';
+        countQuery += ' AND b.user_id = ?';
+        params.push(userId);
+        countParams.push(userId);
+      }
+      if (productId) {
+        query += ' AND b.product_id = ?';
+        countQuery += ' AND b.product_id = ?';
+        params.push(productId);
+        countParams.push(productId);
+      }
+
+      const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ count: number }>();
+      const total = countResult?.count || 0;
+
+      const offset = (page - 1) * limit;
+      query += ' ORDER BY b.booking_date DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      const results = await env.DB.prepare(query).bind(...params).all<any>();
+      const r2Domain = (env as any).R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
+
+      const data = (results.results || []).map((row: any) => {
+        const { product_image_path, ...rest } = row;
+        return {
+          ...rest,
+          product_image_url: product_image_path ? `${r2Domain}/${product_image_path}` : null,
+        };
+      });
+
+      return Response.json({
+        data,
+        pagination: { page, limit, total, total_pages: Math.ceil(total / limit) },
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'กรองข้อมูลไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/bookings - ดูการจองทั้งหมด
   if (url.pathname === '/api/bookings' && method === 'GET') {
     try {
