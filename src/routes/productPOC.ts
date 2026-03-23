@@ -664,6 +664,43 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // GET /api/productPOC/vectors/all?page=1&limit=20 — ดึง vector ทั้งหมด พร้อม pagination
+  if (url.pathname === '/api/productPOC/vectors/all' && method === 'GET') {
+    try {
+      const page = parseInt(url.searchParams.get('page') || '1');
+      const limit = parseInt(url.searchParams.get('limit') || '20');
+
+      // query ด้วย dummy vector เพื่อดึงทั้งหมด (topK สูงสุดที่ Vectorize รองรับ)
+      const dummyVector = new Array(768).fill(0);
+      dummyVector[0] = 1;
+      const maxFetch = Math.min(page * limit, 10000);
+      const results = await env.PRODUCTS_POC_INDEX.query(dummyVector, {
+        topK: maxFetch,
+        returnMetadata: 'all',
+      });
+
+      const allMatches = results.matches || [];
+      const total = allMatches.length;
+      const start = (page - 1) * limit;
+      const paged = allMatches.slice(start, start + limit);
+
+      const described = await env.PRODUCTS_POC_INDEX.describe();
+
+      return Response.json({
+        data: paged.map(m => ({ id: m.id, score: m.score, metadata: m.metadata })),
+        pagination: {
+          page,
+          limit,
+          total_fetched: total,
+          total_in_index: described.vectorsCount,
+          total_pages: Math.ceil(total / limit),
+        },
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ดึง vector ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC/search/test?q=...&topK=20 — ค้นหาด้วย text เปรียบเทียบ embed case
   if (url.pathname === '/api/productPOC/search/test' && method === 'GET') {
     try {
