@@ -74,6 +74,30 @@ export async function handleTicketQueueTestRoutes(
     }
   }
 
+  // PUT /api/ticket-queue-test/booking/:queueId/edit-quantity — แก้ไขจำนวนของ waiting_edit entry
+  const editQtyMatch = url.pathname.match(/^\/api\/ticket-queue-test\/booking\/(\d+)\/edit-quantity$/);
+  if (editQtyMatch && method === "PUT") {
+    try {
+      const queueId = parseInt(editQtyMatch[1]);
+      const productId = url.searchParams.get("product_id");
+      const body: any = await request.json();
+
+      if (!productId) {
+        return Response.json({ error: "กรุณาระบุ product_id เป็น query parameter" }, { status: 400 });
+      }
+
+      const id = env.TICKET_QUEUE_TEST.idFromName(productId.toString());
+      const stub = env.TICKET_QUEUE_TEST.get(id);
+
+      return stub.fetch("https://ticket-queue-test/edit-quantity", {
+        method: "PUT",
+        body: JSON.stringify({ queue_id: queueId, quantity: body.quantity }),
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+  }
+
   // GET /api/ticket-queue-test/status?product_id=...&user_id=... — เช็คสถานะคิวของ user
   if (url.pathname === "/api/ticket-queue-test/status" && method === "GET") {
     try {

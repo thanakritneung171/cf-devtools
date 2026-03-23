@@ -45,6 +45,8 @@ export function getTicketQueueTestPage(): string {
     .badge-blocked { background: #6c757d; }
     .badge-expired { background: #adb5bd; }
     .badge-booked { background: #7209b7; }
+    .badge-waiting-edit { background: #f4a261; color: #333; }
+    .badge-out-of-stock { background: #e63946; }
     @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -192,6 +194,8 @@ export function getTicketQueueTestPage(): string {
       const cls = {
         active: 'badge-active',
         waiting: 'badge-waiting',
+        waiting_edit: 'badge-waiting-edit',
+        out_of_stock: 'badge-out-of-stock',
         completed: 'badge-completed',
         cancelled: 'badge-cancelled',
         blocked: 'badge-blocked',
@@ -347,7 +351,6 @@ export function getTicketQueueTestPage(): string {
       for (const entry of queue) {
         const qid = entry.id;
         const st = (entry.status || '').toLowerCase();
-        const canAct = st === 'active' || st === 'waiting' || st === 'booked';
         const userName = entry.user ? escapeHtml((entry.user.first_name || '') + ' ' + (entry.user.last_name || '')) : String(entry.user_id || '-');
         const expiresAt = entry.expires_at ? new Date(entry.expires_at).toLocaleString('th-TH') : '-';
         const timeRemaining = entry.time_remaining_seconds != null ? formatTimeRemaining(entry.time_remaining_seconds) : '-';
@@ -364,8 +367,15 @@ export function getTicketQueueTestPage(): string {
         html += '<td>' + expiresAt + '</td>';
         html += '<td>' + timeRemaining + '</td>';
         html += '<td>';
-        if (canAct) {
+        if (st === 'booked' || st === 'active') {
           html += '<button class="btn-success btn-sm" onclick="completeBooking(' + qid + ',' + productId + ')">Complete</button> ';
+          html += '<button class="btn-danger btn-sm" onclick="cancelBooking(' + qid + ',' + productId + ')">Cancel</button>';
+        } else if (st === 'waiting_edit') {
+          html += '<button class="btn-primary btn-sm" onclick="editQueueQuantity(' + qid + ',' + productId + ',' + (entry.quantity || 0) + ')">แก้ไขจำนวน</button> ';
+          html += '<button class="btn-danger btn-sm" onclick="cancelBooking(' + qid + ',' + productId + ')">Cancel</button>';
+        } else if (st === 'out_of_stock') {
+          html += '<button class="btn-danger btn-sm" onclick="cancelBooking(' + qid + ',' + productId + ')">Cancel</button>';
+        } else if (st === 'waiting') {
           html += '<button class="btn-danger btn-sm" onclick="cancelBooking(' + qid + ',' + productId + ')">Cancel</button>';
         } else {
           html += '<span style="color:#aaa;">-</span>';
@@ -388,7 +398,25 @@ export function getTicketQueueTestPage(): string {
       }
     }
 
-    // 6. Cancel booking
+    // 6. Edit queue quantity (waiting_edit only)
+    async function editQueueQuantity(queueId, productId, currentQty) {
+      const input = prompt('แก้ไขจำนวน (ปัจจุบัน: ' + currentQty + ')', String(currentQty));
+      if (input === null) return;
+      const newQty = parseInt(input);
+      if (!newQty || newQty <= 0) { alert('จำนวนต้องมากกว่า 0'); return; }
+      try {
+        const { ok, data } = await apiCall(API + '/booking/' + queueId + '/edit-quantity?product_id=' + productId, {
+          method: 'PUT',
+          body: JSON.stringify({ quantity: newQty }),
+        });
+        alert(ok ? (data.message || 'อัปเดตจำนวนแล้ว') : 'Error: ' + JSON.stringify(data));
+        refreshAll();
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+    }
+
+    // 7. Cancel booking
     async function cancelBooking(queueId, productId) {
       if (!confirm('Cancel queue #' + queueId + '?')) return;
       try {

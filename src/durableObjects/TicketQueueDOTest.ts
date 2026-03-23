@@ -3,7 +3,7 @@ interface QueueEntry {
   user_id: number;
   product_id: number;
   quantity: number;
-  status: 'booked' | 'waiting';
+  status: 'booked' | 'waiting' | 'waiting_edit' | 'out_of_stock';
   created_at: string;
   expires_at: string | null; // เวลาหมดอายุ (เฉพาะ booked เท่านั้น)
 }
@@ -142,15 +142,30 @@ export class TicketQueueDOTest {
   /** คำนวณ status ใหม่ทั้ง queue — promote waiting → booked ถ้า effective stock พอ */
   private recalculateStatuses(queue: QueueEntry[], stock: StockInfo): void {
     let effectiveAvailable = this.getEffectiveAvailable(stock, queue.filter((e) => e.status === "booked"));
+    // ติดตาม anyBooked แบบ realtime — อัปเดตทุกครั้งที่ promote หรือเจอ booked เดิม
+    let anyBooked = queue.some((e) => e.status === "booked");
+    let firstWaitingMarked = false;
 
     for (const entry of queue) {
-      if (entry.status === "booked") continue; // ข้าม booked ที่อยู่แล้ว
-      if (entry.status === "waiting" && effectiveAvailable >= entry.quantity) {
+      if (entry.status === "booked") {
+        anyBooked = true;
+        continue;
+      }
+
+      if (effectiveAvailable >= entry.quantity) {
         entry.status = "booked";
-        entry.expires_at = this.createExpiresAt(); // ตั้งเวลาหมดอายุตอน promote
+        entry.expires_at = this.createExpiresAt();
         effectiveAvailable -= entry.quantity;
+        anyBooked = true; // update ทันทีที่ promote
       } else {
-        break; // stock ไม่พอ ที่เหลือเป็น waiting ทั้งหมด
+        // stock ไม่พอ — กำหนด special status เฉพาะเมื่อไม่มี booked ใดๆ ในคิว
+        if (!firstWaitingMarked && !anyBooked) {
+          entry.status = stock.available_quantity === 0 ? "out_of_stock" : "waiting_edit";
+          firstWaitingMarked = true;
+        } else {
+          entry.status = "waiting";
+        }
+        entry.expires_at = null;
       }
     }
   }
@@ -193,15 +208,7 @@ export class TicketQueueDOTest {
         return Response.json({ error: "ไม่พบสินค้า" }, { status: 404 });
       }
 
-      // 2. เช็ค quantity กับ available (stock จริงที่เหลือหลังหัก complete แล้ว)
-      if (quantity > stock.available_quantity) {
-        return Response.json(
-          { error: `ไม่สามารถจองได้ สินค้าคงเหลือไม่เพียงพอ (available_quantity = ${stock.available_quantity})` },
-          { status: 400 }
-        );
-      }
-
-      // 3. เช็คซ้ำ
+      // 2. เช็คซ้ำ
       const queue = await this.getQueue();
       const existing = queue.find(
         (e) => e.product_id === productId && e.user_id === userId
@@ -213,15 +220,25 @@ export class TicketQueueDOTest {
         );
       }
 
-      // 4. คำนวณ effective available แล้วกำหนด status (ไม่หัก stock จริง)
-      // ถ้ามี waiting อยู่ก่อนหน้า → ต้อง waiting ด้วย (ห้ามข้ามคิว)
-      const hasWaiting = queue.some((e) => e.status === "waiting");
+      // 3. คำนวณ effective available แล้วกำหนด status
+      const hasWaiting = queue.some((e) => e.status === "waiting" || e.status === "waiting_edit" || e.status === "out_of_stock");
+      const hasBooked = queue.some((e) => e.status === "booked");
       const effectiveAvailable = this.getEffectiveAvailable(stock, queue);
-      const queueStatus: 'booked' | 'waiting' = (!hasWaiting && effectiveAvailable >= quantity) ? "booked" : "waiting";
 
-      // 5. เพิ่มเข้า queue
+      let queueStatus: QueueEntry['status'];
+      if (!hasWaiting && effectiveAvailable >= quantity) {
+        queueStatus = "booked";
+      } else if (stock.available_quantity === 0 && !hasBooked && !hasWaiting) {
+        queueStatus = "out_of_stock";
+      } else if (quantity > effectiveAvailable && !hasBooked && !hasWaiting) {
+        queueStatus = "waiting_edit";
+      } else {
+        queueStatus = "waiting";
+      }
+
+      // 4. เพิ่มเข้า queue
       const queueId = await this.getNextId();
-      const now = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString();
+      const now = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
       const newEntry: QueueEntry = {
         id: queueId,
         user_id: userId,
@@ -237,12 +254,16 @@ export class TicketQueueDOTest {
       // ตั้ง alarm ถ้ามี booked
       await this.scheduleNextAlarm(queue);
 
-      // 6. หา position
+      // 5. หา position
       const position = queue.findIndex((e) => e.id === queueId) + 1;
 
-      const message = queueStatus === "booked"
-        ? "จองสินค้าสำเร็จ (booked)"
-        : "สินค้าไม่เพียงพอ รอคิว (waiting)";
+      const messageMap: Record<string, string> = {
+        booked: "จองสินค้าสำเร็จ (booked)",
+        waiting: "สินค้าไม่เพียงพอ รอคิว (waiting)",
+        waiting_edit: "จำนวนมากกว่าสินค้าคงเหลือ กรุณาแก้ไขจำนวน (waiting_edit)",
+        out_of_stock: "สินค้าหมด (out_of_stock)",
+      };
+      const message = messageMap[queueStatus] || "เข้าคิวสำเร็จ";
 
       return Response.json({
         queue_entry: this.enrichWithTimeRemaining(newEntry),
@@ -433,6 +454,8 @@ export class TicketQueueDOTest {
         total: queue.length,
         booked_count: queue.filter((e) => e.status === "booked").length,
         waiting_count: queue.filter((e) => e.status === "waiting").length,
+        waiting_edit_count: queue.filter((e) => e.status === "waiting_edit").length,
+        out_of_stock_count: queue.filter((e) => e.status === "out_of_stock").length,
         stock: stock || null,
         effective_available: stock ? this.getEffectiveAvailable(stock, queue) : 0,
       });
@@ -510,6 +533,45 @@ export class TicketQueueDOTest {
         booking_timeout_minutes: BOOKING_TIMEOUT_MS / 60000,
         blocked_at,
         queue: queueDetail,
+      });
+    }
+
+    // ========== PUT /edit-quantity — แก้ไขจำนวนของ waiting_edit entry ==========
+    if (url.pathname.endsWith("/edit-quantity") && method === "PUT") {
+      const body: any = await request.json();
+      const queueId = Math.floor(Number(body.queue_id));
+      const newQuantity = Math.floor(Number(body.quantity));
+
+      if (!queueId || !newQuantity) {
+        return Response.json({ error: "กรุณาระบุ queue_id และ quantity" }, { status: 400 });
+      }
+
+      const queue = await this.getQueue();
+      const idx = queue.findIndex((e) => e.id === queueId);
+      if (idx === -1) {
+        return Response.json({ error: "ไม่พบคิวนี้" }, { status: 404 });
+      }
+
+      const entry = queue[idx];
+      if (entry.status !== "waiting_edit") {
+        return Response.json({ error: `แก้ไขจำนวนได้เฉพาะ waiting_edit เท่านั้น (สถานะปัจจุบัน: ${entry.status})` }, { status: 400 });
+      }
+
+      const stock = await this.getStock(entry.product_id);
+      if (!stock) {
+        return Response.json({ error: "ไม่พบข้อมูล stock" }, { status: 500 });
+      }
+
+      entry.quantity = newQuantity;
+      // recalculate — อาจ promote เป็น booked ได้ถ้า qty ใหม่พอ
+      this.recalculateStatuses(queue, stock);
+      await this.saveQueue(queue);
+      await this.scheduleNextAlarm(queue);
+
+      const updated = queue.find((e) => e.id === queueId);
+      return Response.json({
+        queue_entry: updated ? this.enrichWithTimeRemaining(updated) : null,
+        message: `อัปเดตจำนวนเป็น ${newQuantity} แล้ว`,
       });
     }
 
