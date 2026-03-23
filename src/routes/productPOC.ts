@@ -654,9 +654,9 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
 
       const embedding = await generateEmbedding(env.AI, imageDescription);
       const matches = await env.PRODUCTS_POC_INDEX.query(embedding, { topK, returnMetadata: 'all' });
-      const { caseStats, rawMatches } = buildCaseAnalysis(matches);
 
-      return Response.json({ image_description: imageDescription, total_matches: rawMatches.length, case_analysis: caseStats, raw_matches: rawMatches });
+      const rawMatches = (matches.matches || []).map(m => ({ id: m.id, score: m.score, metadata: m.metadata }));
+      return Response.json({ image_description: imageDescription, total_matches: rawMatches.length, raw_matches: rawMatches });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ค้นหาด้วยรูปภาพไม่สำเร็จ' }, { status: 500 });
     }
