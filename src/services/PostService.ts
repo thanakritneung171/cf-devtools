@@ -257,7 +257,7 @@ export class PostService {
             VALUES (?, ?, ?, ?, ?)
           `
           )
-          .bind(post.user_id, post.title, post.content || '', post.status || 'draft', new Date().toISOString())
+          .bind(post.user_id, post.title, post.content || '', post.status || 'draft', new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))
           .run();
 
         if (result.success && result.meta.last_row_id) {
@@ -336,7 +336,7 @@ export class PostService {
           postInput.title,
           postInput.content || '',
           postInput.status || 'draft',
-          new Date().toISOString()
+          new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })
         )
         .run();
 
@@ -405,7 +405,7 @@ export class PostService {
           post.title,
           post.content || '',
           post.status || 'draft',
-          new Date().toISOString()
+          new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })
         )
         .run();
 
@@ -422,7 +422,7 @@ export class PostService {
 
   async updatePost(id: number, updates: UpdatePostInput): Promise<Post | null> {
     try {
-      const updatedAt = new Date().toISOString();
+      const updatedAt = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
 
       const result = await this.db
         .prepare(
@@ -454,7 +454,7 @@ export class PostService {
     try {
       const result = await this.db
         .prepare('UPDATE posts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL')
-        .bind(new Date().toISOString(), id)
+        .bind(new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }), id)
         .run();
 
       return result.success;

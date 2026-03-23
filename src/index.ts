@@ -102,7 +102,7 @@ export default {
     // GET /api/time
     if (url.pathname === "/api/time" && method === "GET") {
       return Response.json({
-        now: new Date().toISOString(),
+        now: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
       });
     }
 
