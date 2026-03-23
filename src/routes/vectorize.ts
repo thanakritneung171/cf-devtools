@@ -146,8 +146,9 @@ export async function handleVectorizeRoutes(
         const rows = await env.DB.prepare('SELECT id FROM productsPOC').all<{ id: number }>();
         const ids = (rows.results || []).map((r) => String(r.id));
         const vectors = await fetchVectorsInBatches(env.PRODUCTS_POC_INDEX, ids);
-        const backedUpAt = new Date().toISOString();
-        const key = `vectorize-backup/products_poc/${backedUpAt}.json`;
+        const backedUpAtISO = new Date().toISOString();
+        const backedUpAt = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+        const key = `vectorize-backup/products_poc/${backedUpAtISO}.json`;
         await env.MY_BUCKET.put(
           key,
           JSON.stringify({ index: 'PRODUCTS_POC_INDEX', backed_up_at: backedUpAt, count: vectors.length, vectors }),
@@ -160,8 +161,9 @@ export async function handleVectorizeRoutes(
         const rows = await env.DB.prepare('SELECT id FROM bookings').all<{ id: number }>();
         const ids = (rows.results || []).map((r) => String(r.id));
         const vectors = await fetchVectorsInBatches(env.BOOKINGS_INDEX, ids);
-        const backedUpAt = new Date().toISOString();
-        const key = `vectorize-backup/bookings/${backedUpAt}.json`;
+        const backedUpAtISO = new Date().toISOString();
+        const backedUpAt = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+        const key = `vectorize-backup/bookings/${backedUpAtISO}.json`;
         await env.MY_BUCKET.put(
           key,
           JSON.stringify({ index: 'BOOKINGS_INDEX', backed_up_at: backedUpAt, count: vectors.length, vectors }),

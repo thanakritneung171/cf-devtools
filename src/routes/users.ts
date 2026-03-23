@@ -424,7 +424,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
       }
 
       // Update last_login_at
-      const now = new Date().toISOString();
+      const now = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
       await userService.updateUser(user.id, { last_login_at: now });
 
       // Return user (without password_hash)
@@ -438,7 +438,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
 
       const expiresInSec = 3600;
       const token = await generateJWT({ sub: user.id, email: user.email }, secret, expiresInSec);
-      const expires_at = new Date(Date.now() + expiresInSec * 1000).toISOString();
+      const expires_at = new Date(Date.now() + expiresInSec * 1000).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
 
       // เก็บ user profile ลง KV USERS_Profile
       await env.USERS_Profile.put(
