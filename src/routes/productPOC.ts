@@ -621,33 +621,31 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
-  // DELETE /api/productPOC/vectors/clear — ลบ vector ทั้งหมดใน index แล้ว re-index จาก DB
+  // DELETE /api/productPOC/vectors/clear — ลบ vector ทั้งหมดใน index วนจนหมด
   if (url.pathname === '/api/productPOC/vectors/clear' && method === 'DELETE') {
     try {
-      // ดึงสินค้าทั้งหมดจาก DB
-      const allProducts = await env.DB.prepare('SELECT id FROM productsPOC').all<{ id: number }>();
-      const ids = (allProducts.results || []).map(p => p.id);
+      let totalDeleted = 0;
+      let round = 0;
 
-      // สร้าง vector IDs ทั้งหมด (8 cases ต่อสินค้า)
-      const allVectorIds: string[] = [];
-      for (const id of ids) {
-        for (let c = 1; c <= 8; c++) {
-          allVectorIds.push(`${id}_case${c}`);
-        }
-        // รองรับ vector ID เก่าที่ไม่มี _case ด้วย
-        allVectorIds.push(String(id));
+      // วนลบจนกว่าจะไม่มี vector เหลือ
+      while (true) {
+        round++;
+        // query ด้วย dummy vector เพื่อดึง IDs ที่ยังมีอยู่ (สูงสุด 100 ต่อรอบ)
+        const dummyVector = new Array(768).fill(0);
+        dummyVector[0] = 1; // ให้มี direction เพื่อหลีกเลี่ยง zero vector
+        const results = await env.PRODUCTS_POC_INDEX.query(dummyVector, { topK: 100 });
+
+        if (!results.matches || results.matches.length === 0) break;
+
+        const idsToDelete = results.matches.map(m => m.id);
+        await env.PRODUCTS_POC_INDEX.deleteByIds(idsToDelete);
+        totalDeleted += idsToDelete.length;
+
+        // ป้องกัน infinite loop
+        if (round > 1000) break;
       }
 
-      // ลบทีละ batch (Vectorize รองรับสูงสุด 1000 IDs ต่อ call)
-      const batchSize = 1000;
-      let deleted = 0;
-      for (let i = 0; i < allVectorIds.length; i += batchSize) {
-        const batch = allVectorIds.slice(i, i + batchSize);
-        await env.PRODUCTS_POC_INDEX.deleteByIds(batch);
-        deleted += batch.length;
-      }
-
-      return Response.json({ message: 'ลบ vector ทั้งหมดสำเร็จ', vector_ids_cleared: deleted, products_count: ids.length });
+      return Response.json({ message: 'ลบ vector ทั้งหมดสำเร็จ', total_deleted: totalDeleted, rounds: round });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ลบ vector ไม่สำเร็จ' }, { status: 500 });
     }
