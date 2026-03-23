@@ -41,12 +41,12 @@ function buildEmbedCases(p: {
 }
 
 async function generateEmbedding(ai: Ai, text: string): Promise<number[]> {
-  const result = await ai.run('@cf/baai/bge-base-en-v1.5', { text: [text] }) as { data: number[][] };
+  const result = await ai.run('@cf/baai/bge-m3', { text: [text] }) as { data: number[][] };
   return result.data[0];
 }
 
 async function generateEmbeddings(ai: Ai, texts: string[]): Promise<number[][]> {
-  const result = await ai.run('@cf/baai/bge-base-en-v1.5', { text: texts }) as { data: number[][] };
+  const result = await ai.run('@cf/baai/bge-m3', { text: texts }) as { data: number[][] };
   return result.data;
 }
 
@@ -631,7 +631,7 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       while (true) {
         round++;
         // query ด้วย dummy vector เพื่อดึง IDs ที่ยังมีอยู่ (สูงสุด 100 ต่อรอบ)
-        const dummyVector = new Array(768).fill(0);
+        const dummyVector = new Array(1024).fill(0);
         dummyVector[0] = 1; // ให้มี direction เพื่อหลีกเลี่ยง zero vector
         const results = await env.PRODUCTS_POC_INDEX.query(dummyVector, { topK: 100 });
 
@@ -671,7 +671,7 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       const limit = parseInt(url.searchParams.get('limit') || '20');
 
       // query ด้วย dummy vector เพื่อดึงทั้งหมด (topK สูงสุดที่ Vectorize รองรับ)
-      const dummyVector = new Array(768).fill(0);
+      const dummyVector = new Array(1024).fill(0);
       dummyVector[0] = 1;
       const maxFetch = Math.min(page * limit, 10000);
       const results = await env.PRODUCTS_POC_INDEX.query(dummyVector, {
