@@ -651,6 +651,19 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // GET /api/productPOC/vectors/count — นับจำนวน vector ทั้งหมดใน index
+  if (url.pathname === '/api/productPOC/vectors/count' && method === 'GET') {
+    try {
+      const described = await env.PRODUCTS_POC_INDEX.describe();
+      return Response.json({
+        vector_count: described.vectorsCount,
+        config: described.config,
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ดึงข้อมูล index ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC/search/test?q=...&topK=20 — ค้นหาด้วย text เปรียบเทียบ embed case
   if (url.pathname === '/api/productPOC/search/test' && method === 'GET') {
     try {
