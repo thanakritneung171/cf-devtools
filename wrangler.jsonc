@@ -42,7 +42,8 @@
 	"r2_buckets": [
 		{
 			"binding": "MY_BUCKET",
-			"bucket_name": "my-bucket"
+			"bucket_name": "my-bucket",
+			"remote": true
 		}
 	],
 	"d1_databases": [
