@@ -113,6 +113,25 @@ async function upsertMultiCaseVectors(
   await index.upsert(vectors);
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
 function buildCaseAnalysis(matches: VectorizeMatches) {
   const byCaseMap: Record<number, any[]> = {};
   for (const m of matches.matches || []) {
@@ -713,6 +732,110 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       });
     } catch (error: any) {
       return Response.json({ error: error.message || 'Re-index ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // GET /api/productPOC/migrate/export — export สินค้าทั้งหมด + รูปเป็น base64 JSON
+  if (url.pathname === '/api/productPOC/migrate/export' && method === 'GET') {
+    try {
+      const allProducts = await env.DB.prepare(
+        'SELECT p.*, f.file_path, f.file_name, f.file_type FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id'
+      ).all<any>();
+
+      const products = allProducts.results || [];
+      const data: any[] = [];
+
+      for (const p of products) {
+        const item: any = {
+          user_id: p.user_id,
+          product_name: p.product_name,
+          description: p.description || '',
+          price: p.price,
+          total_quantity: p.total_quantity,
+          available_quantity: p.available_quantity,
+        };
+
+        if (p.file_path) {
+          const obj = await env.MY_BUCKET.get(p.file_path);
+          if (obj) {
+            const buffer = await obj.arrayBuffer();
+            item.image = {
+              file_name: p.file_name || 'image.jpg',
+              file_type: p.file_type || 'image/jpeg',
+              base64: arrayBufferToBase64(buffer),
+            };
+          }
+        }
+        data.push(item);
+      }
+
+      return Response.json({ data, total: data.length });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Export ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // POST /api/productPOC/migrate/import — import สินค้าจาก JSON โดยเรียก /api/productPOCimage
+  if (url.pathname === '/api/productPOC/migrate/import' && method === 'POST') {
+    try {
+      const body = await request.json<{ data: any[] }>();
+      if (!body.data || !Array.isArray(body.data)) {
+        return Response.json({ error: 'กรุณาส่ง { data: [...] }' }, { status: 400 });
+      }
+
+      const authHeader = request.headers.get('Authorization') || '';
+      const baseUrl = new URL(request.url).origin;
+      let success = 0;
+      let failed = 0;
+      const results: any[] = [];
+
+      for (const item of body.data) {
+        try {
+          const formData = new FormData();
+          formData.append('user_id', String(item.user_id || 1));
+          formData.append('product_name', item.product_name);
+          formData.append('description', item.description || '');
+          formData.append('price', String(item.price));
+          formData.append('total_quantity', String(item.total_quantity));
+          formData.append('available_quantity', String(item.available_quantity));
+
+          if (item.image?.base64) {
+            const buffer = base64ToArrayBuffer(item.image.base64);
+            const file = new File([buffer], item.image.file_name || 'image.jpg', {
+              type: item.image.file_type || 'image/jpeg',
+            });
+            formData.append('file', file);
+          }
+
+          const res = await fetch(`${baseUrl}/api/productPOCimage`, {
+            method: 'POST',
+            headers: { Authorization: authHeader },
+            body: formData,
+          });
+
+          const result = await res.json() as any;
+          if (res.ok) {
+            success++;
+            results.push({ product_name: item.product_name, status: 'success', id: result.id });
+          } else {
+            failed++;
+            results.push({ product_name: item.product_name, status: 'failed', error: result.error });
+          }
+        } catch (err: any) {
+          failed++;
+          results.push({ product_name: item.product_name, status: 'failed', error: err.message });
+        }
+      }
+
+      return Response.json({
+        message: 'Import เสร็จสิ้น',
+        total: body.data.length,
+        success,
+        failed,
+        results,
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Import ไม่สำเร็จ' }, { status: 500 });
     }
   }
 
