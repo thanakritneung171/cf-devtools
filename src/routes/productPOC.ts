@@ -910,8 +910,38 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       const embedding = await generateEmbedding(env.AI, imageDescription);
       const matches = await env.PRODUCTS_POC_INDEX.query(embedding, { topK, returnMetadata: 'all' });
 
-      const rawMatches = (matches.matches || []).map(m => ({ id: m.id, score: m.score, metadata: m.metadata }));
-      return Response.json({ image_description: imageDescription, total_matches: rawMatches.length, raw_matches: rawMatches });
+      if (!matches.matches || matches.matches.length === 0) {
+        return Response.json({ query: imageDescription, results: [], total: 0 });
+      }
+
+      // Limit to topK
+      const filtered = matches.matches.slice(0, topK);
+
+      // Fetch full product data from D1 (แยก product ID จาก vector ID: {id}_case{N})
+      const productIds = [...new Set(filtered.map((m) => m.id.split('_case')[0]))];
+      const placeholders = productIds.map(() => '?').join(',');
+      const products = await env.DB.prepare(
+        `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE p.id IN (${placeholders})`
+      )
+        .bind(...productIds.map(Number))
+        .all<any>();
+
+      const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
+      const bestScoreMap = new Map<string, number>();
+      for (const m of filtered) {
+        const pid = m.id.split('_case')[0];
+        const prev = bestScoreMap.get(pid) ?? 0;
+        if (m.score > prev) bestScoreMap.set(pid, m.score);
+      }
+      const results = (products.results ?? [])
+        .map((p: any) => {
+          const { file_path, ...product } = p;
+          if (file_path) product.image_url = `${r2Domain}/${file_path}`;
+          return { ...product, score: bestScoreMap.get(String(p.id)) ?? 0 };
+        })
+        .sort((a: any, b: any) => b.score - a.score);
+
+      return Response.json({ query: imageDescription, results, total: results.length });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ค้นหาด้วยรูปภาพไม่สำเร็จ' }, { status: 500 });
     }
