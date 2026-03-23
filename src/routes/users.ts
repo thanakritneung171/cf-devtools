@@ -436,7 +436,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         return Response.json({ error: 'JWT secret ไม่ได้ถูกตั้งค่า (env.JWT_SECRET)' }, { status: 500 });
       }
 
-      const token = await generateJWT({ sub: user.id, email: user.email }, secret, 3600);
+      const expiresInSec = 3600;
+      const token = await generateJWT({ sub: user.id, email: user.email }, secret, expiresInSec);
+      const expires_at = new Date(Date.now() + expiresInSec * 1000).toISOString();
 
       // เก็บ user profile ลง KV USERS_Profile
       await env.USERS_Profile.put(
@@ -445,7 +447,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, met
         { expirationTtl: PROFILE_TTL }
       );
 
-      return Response.json({ user: userSafe, token, message: 'เข้าสู่ระบบสำเร็จ' }, { status: 200 });
+      return Response.json({ user: userSafe, token, expires_at, message: 'เข้าสู่ระบบสำเร็จ' }, { status: 200 });
     } catch (error: any) {
       return Response.json({ error: error.message || 'ไม่สามารถเข้าสู่ระบบได้' }, { status: 500 });
     }
