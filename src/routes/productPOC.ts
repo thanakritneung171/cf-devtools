@@ -17,9 +17,117 @@ function buildProductPOCEmbedText(p: { product_name: string; description?: strin
   return `${p.product_name} ${p.description || ''}`.trim();
 }
 
+interface EmbedCase {
+  caseNumber: number;
+  text: string;
+}
+
+function buildEmbedCases(p: {
+  product_name: string;
+  description?: string;
+  price: number;
+  total_quantity: number;
+  available_quantity: number;
+}): EmbedCase[] {
+  return [
+    { caseNumber: 1, text: `${p.product_name} ${p.description || ''}`.trim() },
+    { caseNumber: 2, text: `${p.product_name} ${p.description || ''} ${p.price}`.trim() },
+    { caseNumber: 3, text: p.product_name },
+    { caseNumber: 4, text: p.description || '' },
+    { caseNumber: 5, text: String(p.total_quantity) },
+    { caseNumber: 6, text: String(p.available_quantity) },
+    { caseNumber: 7, text: String(p.price) },
+  ].filter(c => c.text.length > 0);
+}
+
 async function generateEmbedding(ai: Ai, text: string): Promise<number[]> {
   const result = await ai.run('@cf/baai/bge-base-en-v1.5', { text: [text] }) as { data: number[][] };
   return result.data[0];
+}
+
+async function generateEmbeddings(ai: Ai, texts: string[]): Promise<number[][]> {
+  const result = await ai.run('@cf/baai/bge-base-en-v1.5', { text: texts }) as { data: number[][] };
+  return result.data;
+}
+
+async function describeImageWithVision(ai: Ai, imageBytes: ArrayBuffer): Promise<string> {
+  const result = await ai.run('@cf/llava-hf/llava-1.5-7b-hf', {
+    image: [...new Uint8Array(imageBytes)],
+    prompt: 'Describe this product image in detail for search indexing.',
+    max_tokens: 256,
+  }) as any;
+  return result.description || result.response || '';
+}
+
+async function insertMultiCaseVectors(
+  ai: Ai, index: VectorizeIndex, productId: number,
+  product: { product_name: string; description?: string; price: number; total_quantity: number; available_quantity: number },
+  imageBytes?: ArrayBuffer,
+): Promise<void> {
+  const cases = buildEmbedCases(product);
+  const embeddings = await generateEmbeddings(ai, cases.map(c => c.text));
+  const vectors: VectorizeVector[] = cases.map((c, i) => ({
+    id: `${productId}_case${c.caseNumber}`,
+    values: embeddings[i],
+    metadata: { product_name: product.product_name, embed_case: c.caseNumber },
+  }));
+
+  if (imageBytes) {
+    const desc = await describeImageWithVision(ai, imageBytes);
+    if (desc.trim()) {
+      const imgEmb = await generateEmbedding(ai, desc);
+      vectors.push({
+        id: `${productId}_case8`,
+        values: imgEmb,
+        metadata: { product_name: product.product_name, embed_case: 8, image_description: desc },
+      });
+    }
+  }
+  await index.insert(vectors);
+}
+
+async function upsertMultiCaseVectors(
+  ai: Ai, index: VectorizeIndex, productId: number,
+  product: { product_name: string; description?: string; price: number; total_quantity: number; available_quantity: number },
+  imageBytes?: ArrayBuffer,
+): Promise<void> {
+  const cases = buildEmbedCases(product);
+  const embeddings = await generateEmbeddings(ai, cases.map(c => c.text));
+  const vectors: VectorizeVector[] = cases.map((c, i) => ({
+    id: `${productId}_case${c.caseNumber}`,
+    values: embeddings[i],
+    metadata: { product_name: product.product_name, embed_case: c.caseNumber },
+  }));
+
+  if (imageBytes) {
+    const desc = await describeImageWithVision(ai, imageBytes);
+    if (desc.trim()) {
+      const imgEmb = await generateEmbedding(ai, desc);
+      vectors.push({
+        id: `${productId}_case8`,
+        values: imgEmb,
+        metadata: { product_name: product.product_name, embed_case: 8, image_description: desc },
+      });
+    }
+  }
+  await index.upsert(vectors);
+}
+
+function buildCaseAnalysis(matches: VectorizeMatches) {
+  const byCaseMap: Record<number, any[]> = {};
+  for (const m of matches.matches || []) {
+    const caseNum = Number(m.metadata?.embed_case || 0);
+    if (!byCaseMap[caseNum]) byCaseMap[caseNum] = [];
+    byCaseMap[caseNum].push({ id: m.id, score: m.score, product_name: m.metadata?.product_name, embed_case: caseNum });
+  }
+  const caseStats = Object.entries(byCaseMap).map(([caseNum, items]) => ({
+    embed_case: Number(caseNum),
+    count: items.length,
+    avg_score: +(items.reduce((s, i) => s + i.score, 0) / items.length).toFixed(4),
+    max_score: +Math.max(...items.map(i => i.score)).toFixed(4),
+    top_match: items.sort((a, b) => b.score - a.score)[0],
+  })).sort((a, b) => b.max_score - a.max_score);
+  return { caseStats, rawMatches: (matches.matches || []).map(m => ({ id: m.id, score: m.score, metadata: m.metadata })) };
 }
 
 export async function handleProductPOCRoutes(request: Request, env: Env, url: URL, method: string): Promise<Response | null> {
@@ -44,20 +152,11 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       }
       const product = await service.create(body);
 
-      // สร้าง Vectorize embedding
-      const embedText = buildProductPOCEmbedText(body);
-      const embedding = await generateEmbedding(env.AI, embedText);
-      await env.PRODUCTS_POC_INDEX.insert([
-        {
-          id: String(product.id),
-          values: embedding,
-          metadata: {
-            product_name: body.product_name,
-            description: body.description || '',
-            price: String(body.price),
-          },
-        },
-      ]);
+      // สร้าง Vectorize embedding (8 cases)
+      await insertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
+        product_name: body.product_name, description: body.description,
+        price: body.price, total_quantity: body.total_quantity, available_quantity: body.available_quantity,
+      });
 
       return Response.json(product, { status: 201 });
     } catch (error: any) {
@@ -89,33 +188,27 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
         body.available_quantity = body.total_quantity;
       }
 
-      // อัปโหลดรูปผ่าน FileService (ถ้ามี)
+      // อ่าน image bytes ก่อน upload (สำหรับ vector case 8)
+      let imageBytes: ArrayBuffer | undefined;
       if (file) {
         if (file.size > 10 * 1024 * 1024) {
           return Response.json({ error: 'ไฟล์ขนาดใหญ่เกิน 10MB' }, { status: 400 });
         }
+        imageBytes = await file.arrayBuffer();
+        const fileClone = new File([imageBytes], file.name, { type: file.type });
         const fileService = new FileService(env);
         const authPayload = authCheck as any;
-        const uploadedFile = await fileService.uploadFile(file, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
+        const uploadedFile = await fileService.uploadFile(fileClone, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
         body.image_id = uploadedFile.id;
       }
 
       const product = await service.create(body);
 
-      // สร้าง Vectorize embedding
-      const embedText = buildProductPOCEmbedText(body);
-      const embedding = await generateEmbedding(env.AI, embedText);
-      await env.PRODUCTS_POC_INDEX.insert([
-        {
-          id: String(product.id),
-          values: embedding,
-          metadata: {
-            product_name: body.product_name,
-            description: body.description || '',
-            price: String(body.price),
-          },
-        },
-      ]);
+      // สร้าง Vectorize embedding (8 cases, case 8 เฉพาะเมื่อมีรูป)
+      await insertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
+        product_name: body.product_name, description: body.description,
+        price: body.price, total_quantity: body.total_quantity, available_quantity: body.available_quantity,
+      }, imageBytes);
 
       return Response.json(product, { status: 201 });
     } catch (error: any) {
@@ -165,22 +258,27 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
         return Response.json({ results: [], total: 0 });
       }
 
-      // Fetch full product data from D1
-      const ids = filtered.map((m) => m.id);
-      const placeholders = ids.map(() => '?').join(',');
+      // Fetch full product data from D1 (แยก product ID จาก vector ID: {id}_case{N})
+      const productIds = [...new Set(filtered.map((m) => m.id.split('_case')[0]))];
+      const placeholders = productIds.map(() => '?').join(',');
       const products = await env.DB.prepare(
         `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE p.id IN (${placeholders})`
       )
-        .bind(...ids.map(Number))
+        .bind(...productIds.map(Number))
         .all<any>();
 
       const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
-      const scoreMap = new Map(filtered.map((m) => [m.id, m.score]));
+      const bestScoreMap = new Map<string, number>();
+      for (const m of filtered) {
+        const pid = m.id.split('_case')[0];
+        const prev = bestScoreMap.get(pid) ?? 0;
+        if (m.score > prev) bestScoreMap.set(pid, m.score);
+      }
       const results = (products.results ?? [])
         .map((p: any) => {
           const { file_path, ...product } = p;
           if (file_path) product.image_url = `${r2Domain}/${file_path}`;
-          return { ...product, score: scoreMap.get(String(p.id)) ?? 0 };
+          return { ...product, score: bestScoreMap.get(String(p.id)) ?? 0 };
         })
         .sort((a: any, b: any) => b.score - a.score);
 
@@ -197,8 +295,8 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       const productId = parseInt(recoMatch[1]);
       const topK = parseInt(url.searchParams.get('topK') || '5');
 
-      // ดึง vector ของสินค้าต้นทาง
-      const vectors = await env.PRODUCTS_POC_INDEX.getByIds([String(productId)]);
+      // ดึง vector ของสินค้าต้นทาง (ใช้ case1)
+      const vectors = await env.PRODUCTS_POC_INDEX.getByIds([`${productId}_case1`]);
       if (!vectors || vectors.length === 0) {
         return Response.json({ error: 'ไม่พบ vector ของสินค้านี้' }, { status: 404 });
       }
@@ -208,30 +306,39 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
         return Response.json({ error: 'ไม่พบ embedding ของสินค้านี้' }, { status: 404 });
       }
 
-      // Query หาสินค้าที่คล้ายกัน (topK + 1 เพื่อตัดตัวเองออก)
+      // Query หาสินค้าที่คล้ายกัน (เพิ่ม topK เพราะแต่ละสินค้ามีหลาย case)
       const matches = await env.PRODUCTS_POC_INDEX.query(sourceVector, {
-        topK: topK + 1,
+        topK: (topK + 1) * 8,
         returnMetadata: 'all',
       });
 
-      // ตัดสินค้าต้นทางออกจากผลลัพธ์
-      const filtered = (matches.matches || []).filter((m) => m.id !== String(productId)).slice(0, topK);
+      // ตัดสินค้าต้นทางออก + deduplicate ตาม product ID
+      const seenProducts = new Set<string>();
+      const deduped: typeof matches.matches = [];
+      for (const m of matches.matches || []) {
+        const pid = m.id.split('_case')[0];
+        if (pid === String(productId)) continue;
+        if (seenProducts.has(pid)) continue;
+        seenProducts.add(pid);
+        deduped.push(m);
+        if (deduped.length >= topK) break;
+      }
 
-      if (filtered.length === 0) {
+      if (deduped.length === 0) {
         return Response.json({ product_id: productId, recommendations: [], total: 0 });
       }
 
       // Fetch full product data from D1
-      const ids = filtered.map((m) => m.id);
-      const placeholders = ids.map(() => '?').join(',');
+      const recProductIds = deduped.map((m) => m.id.split('_case')[0]);
+      const placeholders = recProductIds.map(() => '?').join(',');
       const products = await env.DB.prepare(
         `SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id WHERE p.id IN (${placeholders})`
       )
-        .bind(...ids.map(Number))
+        .bind(...recProductIds.map(Number))
         .all<any>();
 
       const r2Domain = env.R2_DOMAIN || 'https://pub-5996ee0506414893a70d525a21960eba.r2.dev';
-      const scoreMap = new Map(filtered.map((m) => [m.id, m.score]));
+      const scoreMap = new Map(deduped.map((m) => [m.id.split('_case')[0], m.score]));
       const recommendations = (products.results ?? [])
         .map((p: any) => {
           const { file_path, ...product } = p;
@@ -270,37 +377,28 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       if (totalQuantity) body.total_quantity = parseInt(totalQuantity);
       if (availableQuantity) body.available_quantity = parseInt(availableQuantity);
 
-      // อัปโหลดรูปผ่าน FileService (ถ้ามี)
+      // อัปโหลดรูปผ่าน FileService (ถ้ามี) + เก็บ imageBytes สำหรับ vector case 8
+      let imageBytes: ArrayBuffer | undefined;
       if (file) {
         if (file.size > 10 * 1024 * 1024) {
           return Response.json({ error: 'ไฟล์ขนาดใหญ่เกิน 10MB' }, { status: 400 });
         }
+        imageBytes = await file.arrayBuffer();
+        const fileClone = new File([imageBytes], file.name, { type: file.type });
         const fileService = new FileService(env);
         const authPayload = authCheck as any;
-        const uploadedFile = await fileService.uploadFile(file, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
+        const uploadedFile = await fileService.uploadFile(fileClone, authPayload?.sub ? parseInt(authPayload.sub) : undefined);
         body.image_id = uploadedFile.id;
       }
 
       const product = await service.update(productId, body);
       if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
 
-      // อัปเดต Vectorize embedding
-      const embedText = buildProductPOCEmbedText({
-        product_name: product.product_name,
-        description: product.description
-      });
-      const embedding = await generateEmbedding(env.AI, embedText);
-      await env.PRODUCTS_POC_INDEX.upsert([
-        {
-          id: String(product.id),
-          values: embedding,
-          metadata: {
-            product_name: product.product_name,
-            description: product.description || '',
-            price: String(product.price),
-          },
-        },
-      ]);
+      // อัปเดต Vectorize embedding (8 cases)
+      await upsertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
+        product_name: product.product_name, description: product.description,
+        price: product.price, total_quantity: product.total_quantity, available_quantity: product.available_quantity,
+      }, imageBytes);
 
       return Response.json(product);
     } catch (error: any) {
@@ -345,17 +443,23 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
         return Response.json({ results: [] });
       }
 
-      const ids = matches.matches.map((m) => m.id);
-      const placeholders = ids.map(() => '?').join(',');
+      // Deduplicate ตาม product ID (แยกจาก vector ID: {id}_case{N})
+      const bestScoreMap2 = new Map<string, number>();
+      for (const m of matches.matches) {
+        const pid = m.id.split('_case')[0];
+        const prev = bestScoreMap2.get(pid) ?? 0;
+        if (m.score > prev) bestScoreMap2.set(pid, m.score);
+      }
+      const productIds2 = [...bestScoreMap2.keys()];
+      const placeholders = productIds2.map(() => '?').join(',');
       const products = await env.DB.prepare(
         `SELECT * FROM productsPOC WHERE id IN (${placeholders})`
       )
-        .bind(...ids.map(Number))
+        .bind(...productIds2.map(Number))
         .all();
 
-      const scoreMap = new Map(matches.matches.map((m) => [m.id, m.score]));
       const results = (products.results ?? [])
-        .map((p: any) => ({ ...p, score: scoreMap.get(String(p.id)) ?? 0 }))
+        .map((p: any) => ({ ...p, score: bestScoreMap2.get(String(p.id)) ?? 0 }))
         .sort((a: any, b: any) => b.score - a.score);
 
       return Response.json({ results });
@@ -458,23 +562,11 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       const product = await service.update(parseInt(idMatch[1]), body);
       if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
 
-      // อัปเดต Vectorize embedding
-      const embedText = buildProductPOCEmbedText({
-        product_name: product.product_name,
-        description: product.description
+      // อัปเดต Vectorize embedding (8 cases)
+      await upsertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
+        product_name: product.product_name, description: product.description,
+        price: product.price, total_quantity: product.total_quantity, available_quantity: product.available_quantity,
       });
-      const embedding = await generateEmbedding(env.AI, embedText);
-      await env.PRODUCTS_POC_INDEX.upsert([
-        {
-          id: String(product.id),
-          values: embedding,
-          metadata: {
-            product_name: product.product_name,
-            description: product.description || '',
-            price: String(product.price),
-          },
-        },
-      ]);
 
       return Response.json(product);
     } catch (error: any) {
@@ -519,12 +611,54 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       const success = await service.delete(productId);
       if (!success) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
 
-      // ลบ vector จาก Vectorize
-      await env.PRODUCTS_POC_INDEX.deleteByIds([String(productId)]);
+      // ลบ vector ทุก case จาก Vectorize
+      const caseIds = Array.from({ length: 8 }, (_, i) => `${productId}_case${i + 1}`);
+      await env.PRODUCTS_POC_INDEX.deleteByIds(caseIds);
 
       return Response.json({ message: 'ลบสินค้าสำเร็จ' });
     } catch (error: any) {
       return Response.json({ error: error.message }, { status: 500 });
+    }
+  }
+
+  // GET /api/productPOC/search/test?q=...&topK=20 — ค้นหาด้วย text เปรียบเทียบ embed case
+  if (url.pathname === '/api/productPOC/search/test' && method === 'GET') {
+    try {
+      const q = url.searchParams.get('q');
+      if (!q) return Response.json({ error: 'กรุณาระบุ query parameter q' }, { status: 400 });
+
+      const topK = parseInt(url.searchParams.get('topK') || '20');
+      const embedding = await generateEmbedding(env.AI, q);
+      const matches = await env.PRODUCTS_POC_INDEX.query(embedding, { topK, returnMetadata: 'all' });
+      const { caseStats, rawMatches } = buildCaseAnalysis(matches);
+
+      return Response.json({ query: q, total_matches: rawMatches.length, case_analysis: caseStats, raw_matches: rawMatches });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ค้นหาไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
+  // POST /api/productPOC/search/image — ค้นหาด้วยรูปภาพ (multipart form-data)
+  if (url.pathname === '/api/productPOC/search/image' && method === 'POST') {
+    try {
+      const formData = await request.formData();
+      const file = formData.get('file') as File | null;
+      if (!file) return Response.json({ error: 'กรุณาแนบไฟล์รูปภาพ (field: file)' }, { status: 400 });
+
+      const topK = parseInt(formData.get('topK') as string || '20');
+      const imageBytes = await file.arrayBuffer();
+      const imageDescription = await describeImageWithVision(env.AI, imageBytes);
+      if (!imageDescription.trim()) {
+        return Response.json({ error: 'ไม่สามารถอธิบายรูปภาพได้' }, { status: 500 });
+      }
+
+      const embedding = await generateEmbedding(env.AI, imageDescription);
+      const matches = await env.PRODUCTS_POC_INDEX.query(embedding, { topK, returnMetadata: 'all' });
+      const { caseStats, rawMatches } = buildCaseAnalysis(matches);
+
+      return Response.json({ image_description: imageDescription, total_matches: rawMatches.length, case_analysis: caseStats, raw_matches: rawMatches });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'ค้นหาด้วยรูปภาพไม่สำเร็จ' }, { status: 500 });
     }
   }
 

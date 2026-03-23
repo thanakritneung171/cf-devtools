@@ -16,7 +16,7 @@ export class ProductQueueDO {
 
     if (url.pathname.endsWith("/join") && method === 'POST') {
 
-      const body = await request.json()
+      const body = await request.json() as { userId: string; productId: string }
       const userId = body.userId
       const productId = body.productId
 
@@ -77,7 +77,7 @@ export class ProductQueueDO {
       const queue = allQueueResult.results
 
       // หา position
-      const index = queue.findIndex(q => q.user_id === userId)
+      const index = queue.findIndex((q: any) => q.user_id === userId)
 
       let position = null
       let peopleAhead = null
@@ -98,8 +98,7 @@ export class ProductQueueDO {
 
     if (url.pathname.endsWith("/leave") && method === 'POST') {
 
-      const body = await request.json()
-      //const body = await request.json() as { userId: string; productId: string }
+      const body = await request.json() as { userId: string; productId: string }
 
       const userId = body.userId
       const productId = body.productId
