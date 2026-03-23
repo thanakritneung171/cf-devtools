@@ -18,8 +18,11 @@ export async function verifyRequestAuth(req: Request, env: AuthEnv): Promise<Res
 
   const token = authHeader.split(' ')[1];
   const payload = await verifyJWT(token, secret);
+  if (payload === 'expired') {
+    return Response.json({ error: 'token หมดอายุ กรุณาเข้าสู่ระบบใหม่', code: 'TOKEN_EXPIRED' }, { status: 401 });
+  }
   if (!payload) {
-    return Response.json({ error: 'token ไม่ถูกต้องหรือหมดอายุ' }, { status: 401 });
+    return Response.json({ error: 'token ไม่ถูกต้อง' }, { status: 401 });
   }
 
   // Check revocation in KV

@@ -37,7 +37,7 @@ export async function generateJWT(payload: Record<string, any>, secret: string, 
   return `${signingInput}.${signature}`;
 }
 
-export async function verifyJWT(token: string, secret: string) {
+export async function verifyJWT(token: string, secret: string): Promise<Record<string, any> | null | 'expired'> {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
@@ -48,7 +48,7 @@ export async function verifyJWT(token: string, secret: string) {
     const payloadStr = atob(payloadB.replace(/-/g, '+').replace(/_/g, '/'));
     const payload = JSON.parse(payloadStr);
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) return null;
+    if (payload.exp && payload.exp < now) return 'expired';
     return payload;
   } catch {
     return null;
