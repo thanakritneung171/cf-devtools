@@ -145,6 +145,8 @@ export class TicketQueueDOTest {
     // ติดตาม anyBooked แบบ realtime — อัปเดตทุกครั้งที่ promote หรือเจอ booked เดิม
     let anyBooked = queue.some((e) => e.status === "booked");
     let firstWaitingMarked = false;
+    // เมื่อ entry ใด promote ไม่ได้ (FIFO) — entry ถัดไปทั้งหมดต้องรอด้วย
+    let canPromote = true;
 
     for (const entry of queue) {
       if (entry.status === "booked") {
@@ -152,12 +154,14 @@ export class TicketQueueDOTest {
         continue;
       }
 
-      if (effectiveAvailable >= entry.quantity) {
+      if (canPromote && effectiveAvailable >= entry.quantity) {
         entry.status = "booked";
         entry.expires_at = this.createExpiresAt();
         effectiveAvailable -= entry.quantity;
         anyBooked = true; // update ทันทีที่ promote
       } else {
+        // บล็อก promotion ของ entry ถัดไปทั้งหมด (queue เป็น FIFO)
+        canPromote = false;
         // stock ไม่พอ — กำหนด special status เฉพาะเมื่อไม่มี booked ใดๆ ในคิว
         if (!firstWaitingMarked && !anyBooked) {
           entry.status = stock.available_quantity === 0 ? "out_of_stock" : "waiting_edit";
