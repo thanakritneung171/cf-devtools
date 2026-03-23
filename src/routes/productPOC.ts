@@ -664,6 +664,58 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
     }
   }
 
+  // POST /api/productPOC/vectors/reindex — ดึงสินค้าทั้งหมดจาก D1 + รูปจาก R2 แล้ว upsert เข้า Vectorize
+  if (url.pathname === '/api/productPOC/vectors/reindex' && method === 'POST') {
+    try {
+      const allProducts = await env.DB.prepare(
+        'SELECT p.*, f.file_path FROM productsPOC p LEFT JOIN files f ON p.image_id = f.id'
+      ).all<any>();
+
+      const products = allProducts.results || [];
+      let success = 0;
+      let failed = 0;
+      let withImage = 0;
+      const errors: { id: number; error: string }[] = [];
+
+      for (const p of products) {
+        try {
+          let imageBytes: ArrayBuffer | undefined;
+          if (p.file_path) {
+            const obj = await env.MY_BUCKET.get(p.file_path);
+            if (obj) {
+              imageBytes = await obj.arrayBuffer();
+              withImage++;
+            }
+          }
+
+          await upsertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, p.id, {
+            product_name: p.product_name,
+            description: p.description,
+            price: p.price,
+            total_quantity: p.total_quantity,
+            available_quantity: p.available_quantity,
+          }, imageBytes);
+
+          success++;
+        } catch (err: any) {
+          failed++;
+          errors.push({ id: p.id, error: err.message });
+        }
+      }
+
+      return Response.json({
+        message: 'Re-index สำเร็จ',
+        total: products.length,
+        success,
+        failed,
+        with_image: withImage,
+        errors: errors.length > 0 ? errors : undefined,
+      });
+    } catch (error: any) {
+      return Response.json({ error: error.message || 'Re-index ไม่สำเร็จ' }, { status: 500 });
+    }
+  }
+
   // GET /api/productPOC/vectors/all?page=1&limit=20 — ดึง vector ทั้งหมด พร้อม pagination
   if (url.pathname === '/api/productPOC/vectors/all' && method === 'GET') {
     try {
