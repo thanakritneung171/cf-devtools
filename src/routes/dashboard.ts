@@ -113,7 +113,7 @@ export async function dashboardHandler(request: Request, env: Env) {
     endpointLatency[methodPath] = endpointLatency[methodPath]  || [];
     endpointLatency[methodPath].push(latency);
 
-    // Errors
+    // Errors — นับทุก status >= 400 รวม 401
     if (status >= 400) {
       errors++;
       recent_errors.push({
@@ -126,10 +126,20 @@ export async function dashboardHandler(request: Request, env: Env) {
       });
     }
 
-    // Traffic hourly
-    const ts   = typeof time === "number" ? time : parseInt(time);
-    const hour = new Date(ts).getHours();
-    hourlyCount[hour] = (hourlyCount[hour] || 0) + 1;
+    // Traffic hourly — นับเฉพาะวันนี้ เวลาไทย UTC+7
+    const ts      = typeof time === "number" ? time : parseInt(time);
+    const TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
+    const tsLocal = new Date(ts + TZ_OFFSET_MS);
+    const nowLocal = new Date(Date.now() + TZ_OFFSET_MS);
+    const isToday =
+      tsLocal.getUTCFullYear() === nowLocal.getUTCFullYear() &&
+      tsLocal.getUTCMonth()    === nowLocal.getUTCMonth()    &&
+      tsLocal.getUTCDate()     === nowLocal.getUTCDate();
+
+    if (isToday) {
+      const hour = tsLocal.getUTCHours(); // 0-23 ตามเวลาไทย
+      hourlyCount[hour] = (hourlyCount[hour] || 0) + 1;
+    }
 
   }
 
@@ -144,11 +154,12 @@ export async function dashboardHandler(request: Request, env: Env) {
   // slowest API — เรียงตาม avg latency จากมากไปน้อย top 5
   const slowest_api = Object.entries(endpointLatency)
     .map(([endpoint, lats]) => {
-      const avg = Math.round(lats.reduce((s, v) => s + v, 0) / lats.length);
-      const max = Math.max(...lats);
+      const sum = lats.reduce((s, v) => s + v, 0);
+      const avg = Math.round(sum / lats.length);
+      const max = lats.reduce((m, v) => v > m ? v : m, 0);  // ไม่ใช้ spread เพื่อกันกอง stack
       return { endpoint, avg_ms: avg, max_ms: max, count: lats.length };
     })
-    .filter(e => e.count >= 2)        // ต้องมีอย่างน้อย 2 ครั้งถึงนับ
+    .filter(e => e.count >= 2)
     .sort((a, b) => b.avg_ms - a.avg_ms)
     .slice(0, 5);
 
