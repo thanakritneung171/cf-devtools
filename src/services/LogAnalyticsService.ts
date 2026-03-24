@@ -13,6 +13,21 @@ export class LogAnalyticsService {
       return null;
     }
 
+    // ดึง error message จาก Exceptions และ Logs
+    const exceptions: any[]  = log?.Exceptions || [];
+    const logMessages: any[] = log?.Logs        || [];
+    const errorMessage =
+      exceptions.length > 0
+        ? exceptions
+            .map((e: any) => e?.Message || e?.name || JSON.stringify(e))
+            .join(", ")
+        : logMessages
+            .filter((l: any) => l?.Level === "error" || l?.Level === "warn")
+            .map((l: any) =>
+              Array.isArray(l?.Message) ? l.Message.join(" ") : (l?.Message || "")
+            )
+            .join(", ") || "";
+
     return {
       ip:        "unknown",
       method:    log?.Event?.Request?.Method  || "GET",
@@ -21,6 +36,7 @@ export class LogAnalyticsService {
       latency:   log?.WallTimeMs              || 0,
       timestamp: log?.EventTimestampMs        || 0,
       rayId:     log?.Event?.RayID            || "",
+      message:   errorMessage,
     };
 
   }
@@ -30,9 +46,9 @@ export class LogAnalyticsService {
     let total  = 0;
     let errors = 0;
 
-    const api:     Record<string, number> = {};
-    const ips:     Set<string>            = new Set();
-    const latencies: number[]             = [];
+    const api:       Record<string, number> = {};
+    const ips:       Set<string>            = new Set();
+    const latencies: number[]               = [];
 
     for (const raw of this.logs) {
 
@@ -50,7 +66,6 @@ export class LogAnalyticsService {
 
     }
 
-    // Response time stats
     latencies.sort((a, b) => a - b);
 
     const avg_response_ms = latencies.length
@@ -65,13 +80,13 @@ export class LogAnalyticsService {
       .slice(0, 10);
 
     return {
-      total_requests:   total,
+      total_requests: total,
       errors,
-      unique_ips:       ips.size,
+      unique_ips:     ips.size,
       avg_response_ms,
       p95_response_ms,
       p99_response_ms,
-      top_api:          topApi,
+      top_api:        topApi,
     };
 
   }
@@ -102,12 +117,13 @@ export class LogAnalyticsService {
 
       if (log.status >= 400) {
         errors.push({
-          ip:     log.ip,
-          url:    log.path,
-          status: log.status,
-          time:   log.timestamp,
-          rayId:  log.rayId,
-          method: log.method,
+          ip:      log.ip,
+          url:     log.path,
+          status:  log.status,
+          time:    log.timestamp,
+          rayId:   log.rayId,
+          method:  log.method,
+          message: log.message || "",
         });
       }
     }

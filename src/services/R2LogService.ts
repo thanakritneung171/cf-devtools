@@ -13,7 +13,7 @@ export class R2LogService {
     const now = new Date();
     const prefixes: string[] = [];
 
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 1; i++) {
       const d = new Date(now.getTime() - i * 86400000);
       prefixes.push(`logpush/${this.datePrefix(d)}/`);
     }
@@ -108,7 +108,21 @@ export class R2LogService {
       const lines: any[] = [];
       for (const line of text.split("\n")) {
         if (!line.trim()) continue;
-        try { lines.push(JSON.parse(line)); } catch {}
+        try {
+          const parsed = JSON.parse(line);
+          // Logpush บางตัวเก็บข้อมูลทั้งหมดไว้ใน field "content" เป็น string
+          // ต้อง parse อีกชั้นนึง
+          if (parsed && typeof parsed.content === "string") {
+            try {
+              const inner = JSON.parse(parsed.content);
+              lines.push(inner);
+            } catch {
+              lines.push(parsed); // content ไม่ใช่ JSON ใช้ as-is
+            }
+          } else {
+            lines.push(parsed);
+          }
+        } catch {}
       }
 
       return lines;
