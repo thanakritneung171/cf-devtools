@@ -540,6 +540,42 @@ export class TicketQueueDOTest {
       });
     }
 
+    // ========== PUT /sync-stock — sync stock จากภายนอก + recalculate statuses ==========
+    if (url.pathname.endsWith("/sync-stock") && method === "PUT") {
+      const body: any = await request.json();
+      const newTotalQuantity = Math.floor(Number(body.total_quantity));
+      const newAvailableQuantity = Math.floor(Number(body.available_quantity));
+
+      if (isNaN(newTotalQuantity) || isNaN(newAvailableQuantity)) {
+        return Response.json({ error: "กรุณาระบุ total_quantity และ available_quantity" }, { status: 400 });
+      }
+
+      const stock = await this.state.storage.get<StockInfo>("stock");
+      if (!stock) {
+        // DO ยังไม่เคย init (ยังไม่มีคิว) — ไม่มีอะไรต้อง sync
+        return Response.json({ message: "ยังไม่มี stock ใน DO (ไม่มีคิว)" }, { status: 200 });
+      }
+
+      stock.total_quantity = newTotalQuantity;
+      stock.available_quantity = newAvailableQuantity;
+      await this.saveStock(stock);
+
+      const queue = await this.getQueue();
+      this.recalculateStatuses(queue, stock);
+      await this.saveQueue(queue);
+      await this.scheduleNextAlarm(queue);
+
+      const effectiveAvailable = this.getEffectiveAvailable(stock, queue);
+
+      return Response.json({
+        message: "sync stock สำเร็จ",
+        stock,
+        effective_available: effectiveAvailable,
+        booked_count: queue.filter((e) => e.status === "booked").length,
+        waiting_count: queue.filter((e) => e.status === "waiting").length,
+      });
+    }
+
     // ========== PUT /edit-quantity — แก้ไขจำนวนของ waiting_edit entry ==========
     if (url.pathname.endsWith("/edit-quantity") && method === "PUT") {
       const body: any = await request.json();

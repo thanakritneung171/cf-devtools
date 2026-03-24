@@ -11,6 +11,7 @@ interface Env {
   AI: Ai;
   MY_BUCKET: R2Bucket;
   R2_DOMAIN?: string;
+  TICKET_QUEUE_TEST: DurableObjectNamespace;
 }
 
 function buildProductPOCEmbedText(p: { product_name: string; description?: string;  }): string {
@@ -401,12 +402,20 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
 
       if (body.total_quantity !== undefined) {
         const usedQuantity = existing.total_quantity - existing.available_quantity;
-        if (body.total_quantity < usedQuantity) {
+
+        // เช็ค booked ใน DO ก่อน
+        const doId = env.TICKET_QUEUE_TEST.idFromName(productId.toString());
+        const doStub = env.TICKET_QUEUE_TEST.get(doId);
+        const doStockRes = await doStub.fetch(`http://do/queue/stock`);
+        const bookedQuantity = doStockRes.ok
+          ? ((await doStockRes.json<any>()).booked_quantity ?? 0)
+          : 0;
+
+        if (body.total_quantity < usedQuantity + bookedQuantity) {
           return Response.json({
-            error: `total_quantity ต้องไม่น้อยกว่าจำนวนที่ถูกใช้ไปแล้ว (${usedQuantity})`,
+            error: `total_quantity ต้องไม่น้อยกว่า ${usedQuantity + bookedQuantity} (ใช้ไปแล้ว ${usedQuantity} + จองค้างอยู่ ${bookedQuantity})`,
           }, { status: 400 });
         }
-        // คำนวณ available_quantity ใหม่จากจำนวนที่ถูกใช้ไปแล้ว
         body.available_quantity = body.total_quantity - usedQuantity;
       }
 
@@ -426,6 +435,17 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
 
       const product = await service.update(productId, body);
       if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
+      // sync stock ใน DO
+      if (body.total_quantity !== undefined) {
+        const doId = env.TICKET_QUEUE_TEST.idFromName(productId.toString());
+        const doStub = env.TICKET_QUEUE_TEST.get(doId);
+        await doStub.fetch(`http://do/sync-stock`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ total_quantity: product.total_quantity, available_quantity: product.available_quantity }),
+        });
+      }
 
       // อัปเดต Vectorize embedding (8 cases)
       await upsertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
@@ -599,9 +619,18 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
 
       if (body.total_quantity !== undefined) {
         const usedQuantity = existing.total_quantity - existing.available_quantity;
-        if (body.total_quantity < usedQuantity) {
+
+        // เช็ค booked ใน DO ก่อน
+        const doId = env.TICKET_QUEUE_TEST.idFromName(productId.toString());
+        const doStub = env.TICKET_QUEUE_TEST.get(doId);
+        const doStockRes = await doStub.fetch(`http://do/queue/stock`);
+        const bookedQuantity = doStockRes.ok
+          ? ((await doStockRes.json<any>()).booked_quantity ?? 0)
+          : 0;
+
+        if (body.total_quantity < usedQuantity + bookedQuantity) {
           return Response.json({
-            error: `total_quantity ต้องไม่น้อยกว่าจำนวนที่ถูกใช้ไปแล้ว (${usedQuantity})`,
+            error: `total_quantity ต้องไม่น้อยกว่า ${usedQuantity + bookedQuantity} (ใช้ไปแล้ว ${usedQuantity} + จองค้างอยู่ ${bookedQuantity})`,
           }, { status: 400 });
         }
         body.available_quantity = body.total_quantity - usedQuantity;
@@ -609,6 +638,17 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
 
       const product = await service.update(productId, body);
       if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
+      // sync stock ใน DO
+      if (body.total_quantity !== undefined) {
+        const doId = env.TICKET_QUEUE_TEST.idFromName(productId.toString());
+        const doStub = env.TICKET_QUEUE_TEST.get(doId);
+        await doStub.fetch(`http://do/sync-stock`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ total_quantity: product.total_quantity, available_quantity: product.available_quantity }),
+        });
+      }
 
       // อัปเดต Vectorize embedding (8 cases)
       await upsertMultiCaseVectors(env.AI, env.PRODUCTS_POC_INDEX, product.id, {
