@@ -2,7 +2,7 @@ import { R2LogService } from "../services/R2LogService";
 
 export async function dashboardTopIP(request: Request, env: Env) {
 
-  const r2 = new R2LogService(env.MY_BUCKET);
+  const r2   = new R2LogService(env.MY_BUCKET);
   const logs = await r2.readLogs();
 
   const ipCount: Record<string, number> = {};
@@ -10,8 +10,8 @@ export async function dashboardTopIP(request: Request, env: Env) {
   for (const log of logs) {
 
     const ip =
-      log?.ClientIP ||
-      log?.ip ||
+      log?.ClientIP                   ||
+      log?.ip                         ||
       log?.request?.cf?.connecting_ip ||
       "unknown";
 

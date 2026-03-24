@@ -68,6 +68,17 @@ export async function dashboardHandler(request: Request, env: Env) {
       log?.request?.cf?.connecting_ip ||
       "unknown";
 
+    // ดึง error message จาก Exceptions หรือ Logs ของ Workers trace
+    const exceptions: any[] = log?.Exceptions || [];
+    const logMessages: any[] = log?.Logs || [];
+    const errorMessage =
+      exceptions.length > 0
+        ? exceptions.map((e: any) => e?.Message || e?.name || JSON.stringify(e)).join(", ")
+        : logMessages
+            .filter((l: any) => l?.Level === "error" || l?.Level === "warn")
+            .map((l: any) => (Array.isArray(l?.Message) ? l.Message.join(" ") : l?.Message))
+            .join(", ") || "";
+
     // ==========================================================
     // Parse path — รองรับทั้ง full URL และ path-only
     // ==========================================================
@@ -119,10 +130,11 @@ export async function dashboardHandler(request: Request, env: Env) {
       recent_errors.push({
         time,
         ip,
-        url:    path,
+        url:     path,
         status,
         rayId,
-        method: method.toUpperCase(),
+        method:  method.toUpperCase(),
+        message: errorMessage || "",
       });
     }
 
