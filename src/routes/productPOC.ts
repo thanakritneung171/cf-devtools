@@ -206,6 +206,9 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       if (isNaN(body.available_quantity)) {
         body.available_quantity = body.total_quantity;
       }
+      if (body.total_quantity < body.available_quantity) {
+        return Response.json({ error: 'total_quantity ต้องไม่น้อยกว่า available_quantity' }, { status: 400 });
+      }
 
       // อ่าน image bytes ก่อน upload (สำหรับ vector case 8)
       let imageBytes: ArrayBuffer | undefined;
@@ -396,6 +399,17 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
       if (totalQuantity) body.total_quantity = parseInt(totalQuantity);
       if (availableQuantity) body.available_quantity = parseInt(availableQuantity);
 
+      if (body.total_quantity !== undefined) {
+        const usedQuantity = existing.total_quantity - existing.available_quantity;
+        if (body.total_quantity < usedQuantity) {
+          return Response.json({
+            error: `total_quantity ต้องไม่น้อยกว่าจำนวนที่ถูกใช้ไปแล้ว (${usedQuantity})`,
+          }, { status: 400 });
+        }
+        // คำนวณ available_quantity ใหม่จากจำนวนที่ถูกใช้ไปแล้ว
+        body.available_quantity = body.total_quantity - usedQuantity;
+      }
+
       // อัปโหลดรูปผ่าน FileService (ถ้ามี) + เก็บ imageBytes สำหรับ vector case 8
       let imageBytes: ArrayBuffer | undefined;
       if (file) {
@@ -577,8 +591,23 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
   // PUT /api/productPOC/:id
   if (idMatch && method === 'PUT') {
     try {
+      const productId = parseInt(idMatch[1]);
+      const existing = await service.getById(productId);
+      if (!existing) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
+
       const body = await request.json<UpdateProductPOCInput>();
-      const product = await service.update(parseInt(idMatch[1]), body);
+
+      if (body.total_quantity !== undefined) {
+        const usedQuantity = existing.total_quantity - existing.available_quantity;
+        if (body.total_quantity < usedQuantity) {
+          return Response.json({
+            error: `total_quantity ต้องไม่น้อยกว่าจำนวนที่ถูกใช้ไปแล้ว (${usedQuantity})`,
+          }, { status: 400 });
+        }
+        body.available_quantity = body.total_quantity - usedQuantity;
+      }
+
+      const product = await service.update(productId, body);
       if (!product) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
 
       // อัปเดต Vectorize embedding (8 cases)
