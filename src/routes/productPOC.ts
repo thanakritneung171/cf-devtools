@@ -696,6 +696,18 @@ export async function handleProductPOCRoutes(request: Request, env: Env, url: UR
   if (idMatch && method === 'DELETE') {
     try {
       const productId = parseInt(idMatch[1]);
+
+      // เช็คว่ามีการใช้งาน (bookings) แล้วหรือไม่
+      const usageCheck = await env.DB.prepare(
+        'SELECT COUNT(*) as count FROM bookings WHERE product_id = ?'
+      ).bind(productId).first<{ count: number }>();
+
+      if (usageCheck && usageCheck.count > 0) {
+        return Response.json({
+          error: `ไม่สามารถลบสินค้าได้ เนื่องจากมีการใช้งานแล้ว (${usageCheck.count} รายการ)`,
+        }, { status: 409 });
+      }
+
       const success = await service.delete(productId);
       if (!success) return Response.json({ error: 'ไม่พบสินค้า' }, { status: 404 });
 
