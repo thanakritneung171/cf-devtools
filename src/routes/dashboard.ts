@@ -2,8 +2,12 @@ import { R2LogService } from "../services/R2LogService";
 
 export async function dashboardHandler(request: Request, env: Env) {
 
+  const url  = new URL(request.url);
+  const from = url.searchParams.get("from") || undefined;
+  const to   = url.searchParams.get("to")   || undefined;
+
   const r2   = new R2LogService(env.MY_BUCKET);
-  const logs = await r2.readLogs();
+  const logs = await r2.readLogs({ from, to });
 
   const endpointCount:   Record<string, number>   = {};
   const endpointLatency: Record<string, number[]> = {};

@@ -22,6 +22,7 @@ import { dashboardHandler } from "./routes/dashboard";
 import { dashboardTopIP } from "./routes/dashboardTopIP";
 import { dashboardErrors } from "./routes/dashboardErrors";
 import { handleDashboardBookingsRoutes } from "./routes/dashboardBookings";
+import { dashboardAllCached, dashboardAllRealtime } from "./routes/dashboardAll";
 
 declare global {
   interface Env {
@@ -76,6 +77,12 @@ export default {
     };
 
     // Dashboard routes — ไม่ผ่าน error logger
+    if (url.pathname === "/api/dashboard/all/realtime") {
+      return cors(await dashboardAllRealtime(request, env));
+    }
+    if (url.pathname === "/api/dashboard/all") {
+      return cors(await dashboardAllCached(request, env, ctx));
+    }
     if (url.pathname === "/api/dashboard") {
       return cors(await dashboardHandler(request, env));
     }
