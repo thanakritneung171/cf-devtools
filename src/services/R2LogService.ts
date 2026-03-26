@@ -57,18 +57,20 @@ export class R2LogService {
     console.log("[R2] Total files to read:", files.length);
 
     // ==========================================================
-    // Parallel fetch ทีละ batch 10 ไฟล์
-    // ไม่จำกัดจำนวนไฟล์ เพื่อให้ครบ 7 วัน
+    // Parallel fetch — batch 20 ไฟล์ต่อรอบ
+    // ใช้ indexed push แทน spread เพื่อกัน stack overflow กับ log เยอะ
     // ==========================================================
 
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 20;
     const logs: any[] = [];
 
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch   = files.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(batch.map(obj => this.readFile(obj.key)));
       for (const lines of results) {
-        logs.push(...lines);
+        for (let j = 0, len = lines.length; j < len; j++) {
+          logs.push(lines[j]);
+        }
       }
     }
 
