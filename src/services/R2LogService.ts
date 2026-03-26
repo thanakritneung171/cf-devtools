@@ -1,21 +1,40 @@
+export interface ReadLogsOptions {
+  from?: string;  // YYYYMMDD
+  to?:   string;  // YYYYMMDD
+}
+
 export class R2LogService {
 
   constructor(private bucket: R2Bucket) {}
 
-  async readLogs(): Promise<any[]> {
+  async readLogs(options?: ReadLogsOptions): Promise<any[]> {
 
     // ==========================================================
-    // List ไฟล์ 7 วันย้อนหลัง
+    // List ไฟล์ตาม date range หรือ default 1 วัน (วันนี้)
     // R2 naming: logpush/20240115/xxx.gz
-    // list ทุก prefix พร้อมกันใน 1 รอบ
     // ==========================================================
 
     const now = new Date();
     const prefixes: string[] = [];
 
-    for (let i = 0; i < 1; i++) {
-      const d = new Date(now.getTime() - i * 86400000);
-      prefixes.push(`logpush/${this.datePrefix(d)}/`);
+    if (options?.from || options?.to) {
+      // ใช้ date range ที่ระบุ
+      const fromDate = options.from ? this.parseYMD(options.from) : now;
+      const toDate   = options.to   ? this.parseYMD(options.to)   : now;
+      const start    = fromDate <= toDate ? fromDate : toDate;
+      const end      = fromDate <= toDate ? toDate   : fromDate;
+
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        prefixes.push(`logpush/${this.datePrefix(cursor)}/`);
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    } else {
+      // default: วันนี้ 1 วัน
+      for (let i = 0; i < 1; i++) {
+        const d = new Date(now.getTime() - i * 86400000);
+        prefixes.push(`logpush/${this.datePrefix(d)}/`);
+      }
     }
 
     console.log("[R2] Listing prefixes:", prefixes);
@@ -143,6 +162,17 @@ export class R2LogService {
     const m = String(date.getUTCMonth() + 1).padStart(2, "0");
     const d = String(date.getUTCDate()).padStart(2, "0");
     return `${y}${m}${d}`;
+  }
+
+  // ==========================================================
+  // Helper: "YYYYMMDD" → Date
+  // ==========================================================
+
+  private parseYMD(ymd: string): Date {
+    const y = parseInt(ymd.slice(0, 4));
+    const m = parseInt(ymd.slice(4, 6)) - 1;
+    const d = parseInt(ymd.slice(6, 8));
+    return new Date(Date.UTC(y, m, d));
   }
 
 }
