@@ -122,6 +122,17 @@ export class TicketQueueDOTest {
 
     if (expired.length === 0) return queue;
 
+    // แจ้ง user ที่หมดเวลาก่อนลบออกจากคิว
+    for (const e of expired) {
+      await this.pushNotification(e.user_id, {
+        type: 'queue_status_changed',
+        product_id: e.product_id,
+        queue_id: e.id,
+        status: 'expired',
+        message: 'หมดเวลาการจองของคุณแล้ว คิวของคุณถูกยกเลิกอัตโนมัติ',
+      });
+    }
+
     // ลบ entries ที่หมดอายุ
     queue = queue.filter(
       (e) => !(e.status === "booked" && e.expires_at && new Date(e.expires_at).getTime() <= now)
@@ -130,11 +141,16 @@ export class TicketQueueDOTest {
     // recalculate — promote waiting → booked
     const stock = await this.state.storage.get<StockInfo>("stock");
     if (stock) {
+      const beforeMap = new Map(queue.map((e) => [e.id, e.status]));
       this.recalculateStatuses(queue, stock);
+      await this.saveQueue(queue);
+      await this.scheduleNextAlarm(queue);
+      // แจ้ง user ที่ถูก promote (productId จาก stock)
+      await this.notifyPromotedUsers(beforeMap, queue, stock.product_id);
+    } else {
+      await this.saveQueue(queue);
+      await this.scheduleNextAlarm(queue);
     }
-
-    await this.saveQueue(queue);
-    await this.scheduleNextAlarm(queue);
 
     return queue;
   }
@@ -170,6 +186,60 @@ export class TicketQueueDOTest {
           entry.status = "waiting";
         }
         entry.expires_at = null;
+      }
+    }
+  }
+
+  /** ส่ง notification ไปยัง user คนเดียว — helper ลด code ซ้ำ */
+  private async pushNotification(userId: number, payload: object): Promise<void> {
+    if (!this.env.NOTIFICATION_DO) return;
+    try {
+      const doId = this.env.NOTIFICATION_DO.idFromName(userId.toString());
+      const stub = this.env.NOTIFICATION_DO.get(doId);
+      await stub.fetch('https://notification-do/push', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // ไม่ fail ถ้า notification ส่งไม่ได้
+    }
+  }
+
+  /**
+   * ส่ง notification ไปยัง user ที่ status เปลี่ยน หลัง recalculateStatuses
+   * ครอบคลุม: booked (ถึงคิว), waiting_edit (ต้องแก้จำนวน), out_of_stock (สินค้าหมด)
+   * เรียกหลัง recalculateStatuses + saveQueue เสมอ
+   */
+  private async notifyPromotedUsers(
+    beforeMap: Map<number, string>,
+    afterQueue: QueueEntry[],
+    productId: number
+  ): Promise<void> {
+    if (!this.env.NOTIFICATION_DO) return;
+
+    const stock = await this.state.storage.get<StockInfo>("stock");
+    const productName = stock?.product_name || null;
+
+    const notifyMap: Record<string, { message: string }> = {
+      booked: { message: 'ถึงคิวคุณแล้ว! กรุณายืนยันการจองก่อนหมดเวลา' },
+      waiting_edit: { message: 'ถึงคิวคุณแล้ว แต่จำนวนที่จองเกินสินค้าที่เหลือ กรุณาแก้ไขจำนวน' },
+      out_of_stock: { message: 'ถึงคิวคุณแล้ว แต่สินค้าหมดแล้ว กรุณาตรวจสอบ' },
+    };
+
+    for (const entry of afterQueue) {
+      const oldStatus = beforeMap.get(entry.id);
+      const notifyInfo = notifyMap[entry.status];
+
+      if (notifyInfo && oldStatus !== entry.status) {
+        await this.pushNotification(entry.user_id, {
+          type: 'queue_status_changed',
+          product_id: productId,
+          product_name: productName,
+          queue_id: entry.id,
+          status: entry.status,
+          message: notifyInfo.message,
+          expires_at: entry.expires_at,
+        });
       }
     }
   }
@@ -324,9 +394,11 @@ export class TicketQueueDOTest {
       queue.splice(idx, 1);
 
       // 5. recalculate + ตั้ง alarm ใหม่
+      const beforeMapComplete = new Map(queue.map((e) => [e.id, e.status]));
       this.recalculateStatuses(queue, stock);
       await this.saveQueue(queue);
       await this.scheduleNextAlarm(queue);
+      await this.notifyPromotedUsers(beforeMapComplete, queue, entry.product_id);
 
       const booking = await this.env.DB.prepare(
         "SELECT * FROM bookings WHERE id = ?"
@@ -361,14 +433,25 @@ export class TicketQueueDOTest {
         return Response.json({ error: "ไม่พบข้อมูล stock" }, { status: 500 });
       }
 
+      // แจ้ง user ที่ถูกยกเลิกคิว
+      await this.pushNotification(entry.user_id, {
+        type: 'queue_status_changed',
+        product_id: entry.product_id,
+        queue_id: entry.id,
+        status: 'cancelled',
+        message: 'คิวของคุณถูกยกเลิกแล้ว',
+      });
+
       // ลบออกจากคิว (ไม่ต้องคืน stock เพราะยังไม่ได้หัก stock จริงใน DO)
       queue.splice(idx, 1);
 
       // คำนวณ status ใหม่ — waiting อาจ promote เป็น booked ได้ (พร้อมตั้ง expires_at)
+      const beforeMapCancel = new Map(queue.map((e) => [e.id, e.status]));
       this.recalculateStatuses(queue, stock);
 
       await this.saveQueue(queue);
       await this.scheduleNextAlarm(queue);
+      await this.notifyPromotedUsers(beforeMapCancel, queue, entry.product_id);
 
       const effectiveAvailable = this.getEffectiveAvailable(stock, queue);
 
@@ -561,9 +644,11 @@ export class TicketQueueDOTest {
       await this.saveStock(stock);
 
       const queue = await this.getQueue();
+      const beforeMapSync = new Map(queue.map((e) => [e.id, e.status]));
       this.recalculateStatuses(queue, stock);
       await this.saveQueue(queue);
       await this.scheduleNextAlarm(queue);
+      await this.notifyPromotedUsers(beforeMapSync, queue, stock.product_id);
 
       const effectiveAvailable = this.getEffectiveAvailable(stock, queue);
 
@@ -604,9 +689,11 @@ export class TicketQueueDOTest {
 
       entry.quantity = newQuantity;
       // recalculate — อาจ promote เป็น booked ได้ถ้า qty ใหม่พอ
+      const beforeMapEdit = new Map(queue.map((e) => [e.id, e.status]));
       this.recalculateStatuses(queue, stock);
       await this.saveQueue(queue);
       await this.scheduleNextAlarm(queue);
+      await this.notifyPromotedUsers(beforeMapEdit, queue, entry.product_id);
 
       const updated = queue.find((e) => e.id === queueId);
       return Response.json({

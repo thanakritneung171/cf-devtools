@@ -22,6 +22,10 @@
 			{
 			"name": "TICKET_QUEUE_TEST",
 			"class_name": "TicketQueueDOTest"
+			},
+			{
+			"name": "NOTIFICATION_DO",
+			"class_name": "NotificationDO"
 			}
 		]
 	},
@@ -37,6 +41,10 @@
 		{
 			"tag": "v3",
 			"new_classes": ["TicketQueueDOTest"]
+		},
+		{
+			"tag": "v4",
+			"new_classes": ["NotificationDO"]
 		}
 	],
 	"r2_buckets": [

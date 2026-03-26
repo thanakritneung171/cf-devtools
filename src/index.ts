@@ -12,10 +12,12 @@ import { handleFileRoutes } from "./routes/files";
 import { handleProductQueueRoutes } from "./routes/productQueue";
 import { handleTicketQueueRoutes } from "./routes/ticketQueue";
 import { handleTicketQueueTestRoutes } from "./routes/ticketQueueTest";
+import { handleNotificationRoutes } from "./routes/notifications";
 import { getTicketQueueTestPage } from "./pages/ticketQueueTestPage";
 import { LogService } from "./services/LogService";
 export { TicketQueueDO } from "./durableObjects/TicketQueueDO";
 export { TicketQueueDOTest } from "./durableObjects/TicketQueueDOTest";
+export { NotificationDO } from "./durableObjects/NotificationDO";
 import { dashboardHandler } from "./routes/dashboard";
 import { dashboardTopIP } from "./routes/dashboardTopIP";
 import { dashboardErrors } from "./routes/dashboardErrors";
@@ -242,6 +244,10 @@ async function handleAllRoutes(
   // Ticket Queue API Routes
   const ticketQueueResponse = await handleTicketQueueRoutes(request, env, url, method);
   if (ticketQueueResponse) return ticketQueueResponse;
+
+  // Notification WebSocket Routes
+  const notificationResponse = await handleNotificationRoutes(request, env, url, method);
+  if (notificationResponse) return notificationResponse;
 
   // Ticket Queue Test API Routes
   const ticketQueueTestResponse = await handleTicketQueueTestRoutes(request, env, url, method);

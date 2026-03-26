@@ -9,7 +9,13 @@
       "Bash(npx wrangler:*)",
       "Bash(curl:*)",
       "Bash(npx tsc:*)",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(dir \"C:\\\\web_source\\\\cf-devtools\\\\node_modules\")",
+      "Bash(cmd /c \"dir C:\\\\web_source\\\\cf-devtools\\\\node_modules\\\\.bin\\\\tsc* 2>&1\")",
+      "Bash(cmd /c \"npm run build 2>&1\")",
+      "Bash(cmd /c \"C:\\\\web_source\\\\cf-devtools\\\\node_modules\\\\typescript\\\\bin\\\\tsc --noEmit 2>&1\")"
     ]
   }
 }
