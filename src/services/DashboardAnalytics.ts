@@ -293,13 +293,18 @@ export function analyzeLogs(logs: any[]): DashboardResult {
       endpointLatency.set(methodPath, { sum: latency, count: 1, max: latency });
     }
 
+    // แปลง timestamp ให้เป็น number + fallback Date.now() เหมือน dashboard.ts
+    const rawTs = getTime(raw, fmt);
+    const ts = typeof rawTs === "number" && rawTs > 0 ? rawTs
+             : typeof rawTs === "string" ? parseInt(rawTs as any) || nowMs
+             : nowMs;
+
     // Errors — lazy error message
     if (status >= 400) {
       errorCount++;
-      const time = getTime(raw, fmt) || nowMs;
       const message = extractErrorMessage(raw);
 
-      errorBuf[errorBufIdx] = { time, ip, url: path, status, rayId, method, message: message || "" };
+      errorBuf[errorBufIdx] = { time: ts, ip, url: path, status, rayId, method, message: message || "" };
       errorBufIdx++;
       if (errorBufIdx >= MAX_ERRORS) {
         errorBufIdx = 0;
@@ -307,9 +312,8 @@ export function analyzeLogs(logs: any[]): DashboardResult {
       }
     }
 
-    // Traffic hourly — pure math ไม่ใช้ Date object
-    const ts = getTime(raw, fmt);
-    if (ts && ts >= todayStartMs && ts < todayEndMs) {
+    // Traffic hourly — นับเฉพาะวันนี้ เวลาไทย UTC+7
+    if (ts >= todayStartMs && ts < todayEndMs) {
       const hour = Math.floor(((ts + TZ_OFFSET_MS) % MS_PER_DAY) / MS_PER_HOUR);
       hourlyCount[hour]++;
     }
