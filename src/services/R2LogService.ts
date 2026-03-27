@@ -43,7 +43,13 @@ export class R2LogService {
     const listResults = await Promise.all(prefixes.map(p => this.listPrefix(p)));
     let allObjects = listResults.flat();
 
-    // fallback — ถ้าไม่เจอไฟล์เลย อ่าน logpush/ ทั้งหมด
+    // ถ้าระบุ from/to แล้วไม่เจอไฟล์ → คืน array ว่าง (ไม่ fallback)
+    if (allObjects.length === 0 && (options?.from || options?.to)) {
+      console.log("[R2] No files found for date range, returning empty");
+      return [];
+    }
+
+    // fallback — เฉพาะกรณี default (ไม่ได้ระบุ from/to)
     if (allObjects.length === 0) {
       console.log("[R2] No files found by date prefix, fallback to full list");
       allObjects = await this.listPrefix("logpush/");
