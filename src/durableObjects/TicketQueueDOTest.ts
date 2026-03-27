@@ -18,7 +18,7 @@ interface StockInfo {
 }
 
 // กำหนดเวลาหมดอายุการจอง (5 นาที)
-const BOOKING_TIMEOUT_MS = 2.5 * 60 * 1000;
+const BOOKING_TIMEOUT_MS = 5 * 60 * 1000;
 
 export class TicketQueueDOTest {
   state: DurableObjectState;
