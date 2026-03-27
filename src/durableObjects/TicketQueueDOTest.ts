@@ -178,9 +178,11 @@ export class TicketQueueDOTest {
       } else {
         // บล็อก promotion ของ entry ถัดไปทั้งหมด (queue เป็น FIFO)
         canPromote = false;
-        // stock ไม่พอ — กำหนด special status เฉพาะเมื่อไม่มี booked ใดๆ ในคิว
-        if (!firstWaitingMarked && !anyBooked) {
-          entry.status = stock.available_quantity === 0 ? "out_of_stock" : "waiting_edit";
+        // stock ไม่พอ — ถ้า stock = 0 และไม่มี booked → ทุกคนเป็น out_of_stock
+        if (!anyBooked && stock.available_quantity === 0) {
+          entry.status = "out_of_stock";
+        } else if (!firstWaitingMarked && !anyBooked) {
+          entry.status = "waiting_edit";
           firstWaitingMarked = true;
         } else {
           entry.status = "waiting";
@@ -302,7 +304,7 @@ export class TicketQueueDOTest {
       let queueStatus: QueueEntry['status'];
       if (!hasWaiting && effectiveAvailable >= quantity) {
         queueStatus = "booked";
-      } else if (stock.available_quantity === 0 && !hasBooked && !hasWaiting) {
+      } else if (stock.available_quantity === 0 && !hasBooked) {
         queueStatus = "out_of_stock";
       } else if (quantity > effectiveAvailable && !hasBooked && !hasWaiting) {
         queueStatus = "waiting_edit";
