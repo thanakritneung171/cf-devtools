@@ -76,21 +76,32 @@ export default {
       return new Response(res.body, { status: res.status, headers });
     };
 
-    // Dashboard routes — ไม่ผ่าน error logger
-    if (url.pathname === "/api/dashboard/all/realtime") {
-      return cors(await dashboardAllRealtime(request, env));
-    }
-    if (url.pathname === "/api/dashboard/all") {
-      return cors(await dashboardAllCached(request, env, ctx));
-    }
-    if (url.pathname === "/api/dashboard") {
-      return cors(await dashboardHandler(request, env));
-    }
-    if (url.pathname === "/api/dashboard/top-ip") {
-      return cors(await dashboardTopIP(request, env));
-    }
-    if (url.pathname === "/api/dashboard/errors") {
-      return cors(await dashboardErrors(request, env));
+    // Dashboard routes — ไม่ผ่าน error logger แต่ wrap try/catch กัน Error 1101
+    try {
+      if (url.pathname === "/api/dashboard/all/realtime") {
+        return cors(await dashboardAllRealtime(request, env));
+      }
+      if (url.pathname === "/api/dashboard/all") {
+        return cors(await dashboardAllCached(request, env, ctx));
+      }
+      if (url.pathname === "/api/dashboard") {
+        return cors(await dashboardHandler(request, env));
+      }
+      if (url.pathname === "/api/dashboard/top-ip") {
+        return cors(await dashboardTopIP(request, env));
+      }
+      if (url.pathname === "/api/dashboard/errors") {
+        return cors(await dashboardErrors(request, env));
+      }
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        status:  500,
+        method:  request.method,
+        url:     request.url,
+        message: err?.message || String(err),
+        stack:   err?.stack?.slice(0, 300) || "",
+      }));
+      return cors(Response.json({ error: "Internal Server Error" }, { status: 500 }));
     }
 
     // ==========================================================
