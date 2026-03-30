@@ -94,14 +94,15 @@ export default {
         return cors(await dashboardErrors(request, env));
       }
     } catch (err: any) {
+      const message = err?.message || String(err);
       console.error(JSON.stringify({
         status:  500,
         method:  request.method,
         url:     request.url,
-        message: err?.message || String(err),
+        message,
         stack:   err?.stack?.slice(0, 300) || "",
       }));
-      return cors(Response.json({ error: "Internal Server Error" }, { status: 500 }));
+      return cors(Response.json({ error: message }, { status: 500 }));
     }
 
     // ==========================================================
@@ -114,14 +115,15 @@ export default {
       response = await handleAllRoutes(request, env, ctx, url, method);
     } catch (err: any) {
       // Worker exception / crash → log แล้ว return 500
+      const message = err?.message || String(err);
       console.error(JSON.stringify({
         status:  500,
         method:  request.method,
         url:     request.url,
-        message: err?.message || String(err),
+        message,
         stack:   err?.stack?.slice(0, 300) || "",
       }));
-      response = Response.json({ error: "Internal Server Error" }, { status: 500 });
+      response = Response.json({ error: message }, { status: 500 });
     }
 
     // log 4xx และ 5xx เพื่อให้ Logpush เก็บ message
