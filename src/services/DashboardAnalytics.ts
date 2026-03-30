@@ -62,10 +62,10 @@ function detectFormat(sample: any): LogFormat {
 // Fast field accessors per format — ลด optional chaining จาก 4 เหลือ 1
 function getUrl(raw: any, fmt: LogFormat): string {
   switch (fmt) {
-    case LogFormat.WORKERS_TRACE: return raw.Event.Request.URL   || "";
-    case LogFormat.HTTP_LOG:      return raw.ClientRequestURI    || "";
-    case LogFormat.GENERIC:       return raw.request.url         || "";
-    case LogFormat.FLAT:          return raw.URL                 || "";
+    case LogFormat.WORKERS_TRACE: return raw.Event?.Request?.URL  || "";
+    case LogFormat.HTTP_LOG:      return raw.ClientRequestURI     || "";
+    case LogFormat.GENERIC:       return raw.request?.url         || "";
+    case LogFormat.FLAT:          return raw.URL                  || "";
     default:
       return raw?.Event?.Request?.URL || raw?.ClientRequestURI || raw?.request?.url || raw?.URL || "";
   }
@@ -84,9 +84,9 @@ function getStatus(raw: any, fmt: LogFormat): number {
 
 function getMethod(raw: any, fmt: LogFormat): string {
   switch (fmt) {
-    case LogFormat.WORKERS_TRACE: return raw.Event.Request.Method || "GET";
-    case LogFormat.HTTP_LOG:      return raw.ClientRequestMethod  || "GET";
-    case LogFormat.GENERIC:       return raw.request.method       || "GET";
+    case LogFormat.WORKERS_TRACE: return raw.Event?.Request?.Method || "GET";
+    case LogFormat.HTTP_LOG:      return raw.ClientRequestMethod    || "GET";
+    case LogFormat.GENERIC:       return raw.request?.method        || "GET";
     case LogFormat.FLAT:          return raw.Method               || "GET";
     default:
       return raw?.Event?.Request?.Method || raw?.ClientRequestMethod || raw?.request?.method || raw?.Method || "GET";
@@ -106,7 +106,7 @@ function getTime(raw: any, fmt: LogFormat): number {
 
 function getRayId(raw: any, fmt: LogFormat): string {
   switch (fmt) {
-    case LogFormat.WORKERS_TRACE: return raw.Event.RayID || "";
+    case LogFormat.WORKERS_TRACE: return raw.Event?.RayID || "";
     case LogFormat.HTTP_LOG:      return raw.RayID       || "";
     case LogFormat.GENERIC:       return raw.rayId       || "";
     case LogFormat.FLAT:          return raw.RayID       || "";
