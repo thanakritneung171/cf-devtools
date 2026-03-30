@@ -52,7 +52,8 @@ export class R2LogService {
     // fallback — เฉพาะกรณี default (ไม่ได้ระบุ from/to)
     if (allObjects.length === 0) {
       console.log("[R2] No files found by date prefix, fallback to full list");
-      allObjects = await this.listPrefix("logpush/");
+      // allObjects = await this.listPrefix("logpush/");
+         return [];
     }
 
     // กรองเฉพาะ .gz และ .json
